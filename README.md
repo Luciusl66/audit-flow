@@ -70,6 +70,10 @@ Windows 也可用 `.\.venv\Scripts\python.exe` 代替 `python`。仓库随附模
 
 YAML 中的编码前缀采用一般企业常见科目编码。坏账准备科目可能覆盖多类应收资产。经核对后，在客户 Adapter 中设置 `cas_allowance_pairs = {"准备科目编码": ("应收原值科目编码",)}`。缺少配对或原值时，报告会提示补充资料。对经确认的配对，程序按对应范围内应收明细的借方净额合计筛查准备上限，调整金额由复核人根据 ECL 重算确定。
 
+### 准则来源与致谢
+
+> 本项目的 CAS 实务卡片和筛查规则参考毛燕庆老师整理的**审计文库（MaoDocs）**所收录的《企业会计准则》及《企业会计准则应用指南汇编2024》。感谢毛燕庆老师对准则资料的整理与维护。 [企业会计准则](https://docs.maoyanqing.com/accounting/ent/cas/) · [2024 应用指南](https://docs.maoyanqing.com/accounting/ent/casg/)
+
 ## 开源许可
 
 项目采用 [MIT 许可证](LICENSE)。客户输入、底稿、真实映射和运行证据由数据持有人按其保密要求管理。
