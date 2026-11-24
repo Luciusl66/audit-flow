@@ -1,0 +1,33 @@
+# https://docs.maoyanqing.com/accounting/ent/cas/18.html
+# https://docs.maoyanqing.com/accounting/ent/casg/18.html
+schema_version: 1
+cas_no: 18
+name: 企业会计准则第18号——所得税
+status: distilled
+rules:
+  - rule_id: CAS18_TB_DEFERRED_TAX_ASSET_DIRECTION
+    cas_ref: 《企业会计准则第18号——所得税》第十三、二十、二十三条
+    severity: WARNING
+    target_scope: TB
+    account_pattern:
+      type: regex
+      value: ^(?:1811)(?:[._/-][A-Z0-9][A-Z0-9._/-]*)?$
+    check_type: balance_direction
+    condition:
+      expected_direction: debit
+      tolerance: '0.00'
+    suggested_entry: null
+    message_template: 递延所得税资产 ${account_code} 为贷方净额 ${balance}。请核对减记、差异税率底稿及科目映射。
+  - rule_id: CAS18_TB_DEFERRED_TAX_LIABILITY_DIRECTION
+    cas_ref: 《企业会计准则第18号——所得税》第十一至十二、二十三条
+    severity: WARNING
+    target_scope: TB
+    account_pattern:
+      type: regex
+      value: ^(?:2901)(?:[._/-][A-Z0-9][A-Z0-9._/-]*)?$
+    check_type: balance_direction
+    condition:
+      expected_direction: credit
+      tolerance: '0.00'
+    suggested_entry: null
+    message_template: 递延所得税负债 ${account_code} 为借方净额 ${balance}。请核对转回数据和非流动列报。

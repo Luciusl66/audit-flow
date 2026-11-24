@@ -1,0 +1,20 @@
+# https://docs.maoyanqing.com/accounting/ent/cas/01.html
+# https://docs.maoyanqing.com/accounting/ent/casg/01.html
+schema_version: 1
+cas_no: 1
+name: 企业会计准则第1号——存货
+status: distilled
+rules:
+  - rule_id: CAS01_TB_INVENTORY_DIRECTION
+    cas_ref: 《企业会计准则第1号——存货》第三、五、十四至十五条
+    severity: WARNING
+    target_scope: TB
+    account_pattern:
+      type: regex
+      value: ^(?:1401|1402|1403|1405|1406|1408|1411)(?:[._/-][A-Z0-9][A-Z0-9._/-]*)?$
+    check_type: balance_direction
+    condition:
+      expected_direction: debit
+      tolerance: '0.00'
+    suggested_entry: null
+    message_template: 存货原值科目 ${account_code} 为贷方净额 ${balance}。请核对出入库截止、负库存及原值映射。

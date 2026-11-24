@@ -1,0 +1,22 @@
+# https://docs.maoyanqing.com/accounting/ent/cas/08.html
+# https://docs.maoyanqing.com/accounting/ent/casg/08.html
+schema_version: 1
+cas_no: 8
+name: 企业会计准则第8号——资产减值
+status: distilled
+rules:
+  - rule_id: CAS08_GL_IMPAIRMENT_REVERSAL_KEYWORD
+    cas_ref: 《企业会计准则第8号——资产减值》第三、十五至十七条
+    severity: WARNING
+    target_scope: GL
+    account_pattern:
+      type: regex
+      value: ^(?:1512|1603|1703)(?:[._/-][A-Z0-9][A-Z0-9._/-]*)?$
+    check_type: gl_keyword_alert
+    condition:
+      field: summary
+      match: contains
+      keywords:
+        - 转回
+    suggested_entry: null
+    message_template: 减值准备科目 ${account_code} 的摘要含「${keyword}」。核对以前期间已确认的损失，区分处置核销及记账更正。

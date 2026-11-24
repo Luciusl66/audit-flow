@@ -1,0 +1,28 @@
+# https://docs.maoyanqing.com/accounting/ent/cas/30.html
+# https://docs.maoyanqing.com/accounting/ent/casg/30.html
+# https://docs.maoyanqing.com/accounting/ent/cas/30b.html
+# https://kjs.mof.gov.cn/zhengcefabu/202608/t20260805_3994927.htm
+# https://docs.maoyanqing.com/accounting/ent/or/20061030.html
+schema_version: 1
+cas_no: 30
+name: 企业会计准则第30号——财务报表列报
+status: distilled
+rules:
+  - rule_id: CAS30_TB_AP_PREPAYMENT
+    cas_ref: 《企业会计准则第30号——财务报表列报》2014、2026两版第十一、十六至十七条；2006应用指南附录「1123 预付账款」一、四
+    severity: WARNING
+    target_scope: TB
+    account_pattern:
+      type: regex
+      value: ^(?:2202)(?:[._/-][A-Z0-9][A-Z0-9._/-]*)?$
+    check_type: reclassification
+    condition:
+      trigger_direction: debit
+      require_auxiliary: true
+      tolerance: '0.00'
+    suggested_entry:
+      type: RJE
+      debit: 预付款项
+      credit: 应付账款
+      amount: null
+    message_template: 应付辅助明细 ${account_code} 为借方净额 ${balance}。须依据采购合同确认预付款性质并核对异常冲销，再确定列报金额。

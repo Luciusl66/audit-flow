@@ -1,0 +1,50 @@
+# https://docs.maoyanqing.com/accounting/ent/cas/21.html
+# https://docs.maoyanqing.com/accounting/ent/casg/21.html
+schema_version: 1
+cas_no: 21
+name: 企业会计准则第21号——租赁
+status: distilled
+rules:
+  - rule_id: CAS21_TB_RIGHT_OF_USE_ASSET_DIRECTION
+    cas_ref: 《企业会计准则第21号——租赁》第十四、十六、二十条，2024指南第二十一章三（一）1「使用权资产」
+    severity: WARNING
+    target_scope: TB
+    account_pattern:
+      type: names
+      values:
+        - 使用权资产
+    check_type: balance_direction
+    condition:
+      expected_direction: debit
+      tolerance: '0.00'
+    suggested_entry: null
+    message_template: 使用权资产原价 ${account_code} 出现贷方净额 ${balance}。核对首次确认、租赁修改及终止冲销。
+  - rule_id: CAS21_TB_LEASE_CONTRA_DIRECTION
+    cas_ref: 《企业会计准则第21号——租赁》第二十一、二十二、四十条，2024指南第二十一章三（一）2、3及三（二）3「应收融资租赁款减值准备」
+    severity: WARNING
+    target_scope: TB
+    account_pattern:
+      type: names
+      values:
+        - 使用权资产累计折旧
+        - 使用权资产减值准备
+        - 应收融资租赁款减值准备
+    check_type: balance_direction
+    condition:
+      expected_direction: credit
+      tolerance: '0.00'
+    suggested_entry: null
+    message_template: 租赁相关累计折旧或减值准备 ${account_code} 出现借方净额 ${balance}。核对处置转销、冲回及明细归属。
+  - rule_id: CAS21_TB_LESSOR_FINANCE_LEASE_ASSET_DIRECTION
+    cas_ref: 《企业会计准则第21号——租赁》第三十五、三十八条及2024指南第二十一章三（二）1「融资租赁资产」
+    severity: WARNING
+    target_scope: TB
+    account_pattern:
+      type: regex
+      value: ^1461(?:[._/-][A-Z0-9][A-Z0-9._/-]*)?$
+    check_type: balance_direction
+    condition:
+      expected_direction: debit
+      tolerance: '0.00'
+    suggested_entry: null
+    message_template: 融资租赁资产 ${account_code} 出现贷方净额 ${balance}。核对租赁期开始日前取得的资产成本及出租时结转。

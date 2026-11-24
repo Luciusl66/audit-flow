@@ -1,0 +1,20 @@
+# https://docs.maoyanqing.com/accounting/ent/cas/04.html
+# https://docs.maoyanqing.com/accounting/ent/casg/04.html
+schema_version: 1
+cas_no: 4
+name: 企业会计准则第4号——固定资产
+status: distilled
+rules:
+  - rule_id: CAS04_TB_PPE_DIRECTION
+    cas_ref: 《企业会计准则第4号——固定资产》第七、二十三条
+    severity: WARNING
+    target_scope: TB
+    account_pattern:
+      type: regex
+      value: ^(?:1601)(?:[._/-][A-Z0-9][A-Z0-9._/-]*)?$
+    check_type: balance_direction
+    condition:
+      expected_direction: debit
+      tolerance: '0.00'
+    suggested_entry: null
+    message_template: 固定资产原价科目 ${account_code} 期末为贷方净额 ${balance}。请核对处置冲销、暂估及科目映射。

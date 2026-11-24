@@ -1,0 +1,21 @@
+# https://docs.maoyanqing.com/accounting/ent/cas/28.html
+# https://docs.maoyanqing.com/accounting/ent/casg/28.html
+schema_version: 1
+cas_no: 28
+name: 企业会计准则第28号——会计政策、会计估计变更和差错更正
+status: distilled
+rules:
+  - rule_id: CAS28_TB_PRIOR_PERIOD_ADJUSTMENT_UNCLOSED
+    cas_ref: 《企业会计准则第28号——会计政策、会计估计变更和差错更正》第六、十二至十四条及2024指南第二十九章二（3）「以前年度损益调整」
+    severity: WARNING
+    target_scope: TB
+    account_pattern:
+      type: regex
+      value: ^6901(?:[._/-][A-Z0-9][A-Z0-9._/-]*)?$
+    check_type: period_end_nonzero
+    condition:
+      requires_context: period_closed
+      root_only: true
+      tolerance: '0.00'
+    suggested_entry: null
+    message_template: 以前年度损益调整汇总 ${account_code} 在结转后仍有净额 ${balance}。核对税项及未分配利润的结转，并检查所选数据期间。

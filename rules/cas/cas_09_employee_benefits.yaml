@@ -1,0 +1,20 @@
+# https://docs.maoyanqing.com/accounting/ent/cas/09.html
+# https://docs.maoyanqing.com/accounting/ent/casg/09.html
+schema_version: 1
+cas_no: 9
+name: 企业会计准则第9号——职工薪酬
+status: distilled
+rules:
+  - rule_id: CAS09_TB_PAYROLL_LIABILITY_DIRECTION
+    cas_ref: 《企业会计准则第9号——职工薪酬》（2014年修订）第五至九、二十五条
+    severity: WARNING
+    target_scope: TB
+    account_pattern:
+      type: regex
+      value: ^(?:2211)(?:[._/-][A-Z0-9][A-Z0-9._/-]*)?$
+    check_type: balance_direction
+    condition:
+      expected_direction: credit
+      tolerance: '0.00'
+    suggested_entry: null
+    message_template: 应付职工薪酬 ${account_code} 为借方净额 ${balance}。请核对预付、重复支付及期末计提。

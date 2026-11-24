@@ -3,17 +3,19 @@
 from collections import defaultdict
 from dataclasses import dataclass
 from decimal import Decimal
-from pathlib import Path
+from string import Template
 
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from yaml import YAMLError, safe_load
 
+from core.cas_routing import (ROOT, CasRoute, account_hierarchy, confirmed_account_names,
+                              load_routed_rules, matches_account, route_cas)
 from core.fill_workpaper import leaf_rows, literal
-from core.schema import AuditError, StandardTB, TB_SHEET, ZERO, account_code
+from core.schema import AuditError, GL_SHEET, StandardTB, TB_SHEET, ZERO, account_code
 
 CAS_SHEET = "01_准则异常与调整建议"
-DEFAULT_RULES = Path(__file__).resolve().parents[1] / "rules" / "cas_general.yaml"
+DEFAULT_RULES = ROOT / "rules" / "cas_general.yaml"
 RULE_IDS = ("AR_CREDIT", "AP_DEBIT", "CASH_DIRECTION", "PPE_DIRECTION", "PL_UNCLOSED", "AR_ALLOWANCE")
 POSTING_RULES = {"AR_CREDIT", "AP_DEBIT", "AR_ALLOWANCE"}
 
@@ -33,7 +35,7 @@ class Finding:
     rule_id: str
     position: str
     subject: str
-    balance: Decimal
+    balance: Decimal | None
     detail: str
     entry_type: str = "待核对"
     debit: str = ""
@@ -183,6 +185,170 @@ def scan_tb(tb, ar_account, *, account_pairs=None, rules_path=DEFAULT_RULES):
     findings.extend(closing_findings(rows, rules["PL_UNCLOSED"]))
     findings.extend(allowance_findings(rows, rules["AR_ALLOWANCE"], pairs))
     return rules, tuple(findings)
+
+
+@dataclass(frozen=True)
+class RoutedScan:
+    route: CasRoute
+    rules: dict[str, Rule]
+    findings: tuple[Finding, ...]
+    deferred_rule_ids: tuple[str, ...]
+
+
+def voucher_differences(gl, tolerance):
+    totals = {}
+    for index, record in enumerate(gl, 2):
+        key = (record.date, record.voucher_no)
+        first, total = totals.get(key, (index, ZERO))
+        totals[key] = (first, total + record.debit - record.credit)
+    for index, difference in totals.values():
+        if abs(difference) > tolerance:
+            yield f"{GL_SHEET}!{index}", "凭证借贷平衡", None, {"difference": f"{difference:.2f}"}
+
+
+def post_close_balances(tb, selected_account, tolerance, *, root_only=False):
+    selected = [(i, record) for i, record in enumerate(tb, 2) if selected_account(record.account_code)]
+    if root_only:
+        roots = [(i, record) for i, record in selected if record.level == 1 and record.aux_name is None]
+        if selected and not roots:
+            yield None
+        selected = roots
+    for index, record in leaf_rows(selected):
+        balance = net(record)
+        if abs(balance) > tolerance:
+            debit, credit = ((record.account_name, "本年利润") if balance < ZERO else
+                             ("本年利润", record.account_name))
+            variables = {"account_code": record.account_code, "balance": f"{balance:.2f}",
+                         "debit_account": debit, "credit_account": credit, "amount": f"{abs(balance):.2f}"}
+            yield f"{TB_SHEET}!{index}", subject(record), balance, variables
+
+
+def direction_observations(tb, selected_account, condition, tolerance):
+    rows = ((i, row) for i, row in enumerate(tb, 2) if selected_account(row.account_code))
+    for index, row in leaf_rows(rows):
+        balance = net(row)
+        if abs(balance) <= tolerance or condition.get("require_auxiliary") and not row.aux_name:
+            continue
+        direction = "credit" if balance < ZERO else "debit"
+        matched = (direction == condition["trigger_direction"] if "trigger_direction" in condition
+                   else direction != condition["expected_direction"])
+        if matched:
+            yield f"{TB_SHEET}!{index}", subject(row), balance, {
+                "account_code": row.account_code, "balance": f"{balance:.2f}"}
+
+
+def summary_observations(gl, selected_account, keywords):
+    for index, row in enumerate(gl, 2):
+        if selected_account(row.account_code):
+            keyword = next((word for word in keywords if word in row.summary), None)
+            if keyword is not None:
+                yield f"{GL_SHEET}!{index}", row.account_code, None, {
+                    "account_code": row.account_code, "keyword": keyword}
+
+
+def contra_observations(tb, selected_account, gross_account, condition, tolerance, pairs):
+    rows = tuple(enumerate(tb, 2))
+    allowance_rows = leaf_rows((index, row) for index, row in rows if selected_account(row.account_code))
+    ordered = sorted(pairs, key=len, reverse=True)
+    groups = defaultdict(list)
+    by_auxiliary = condition["grouping"] == "auxiliary"
+    for index, row in allowance_rows:
+        key = next((prefix for prefix in ordered if matches(row, prefix)), None)
+        if key is not None:
+            groups[pairs[key], row.aux_name if by_auxiliary else None].append((index, row))
+        elif net(row) < ZERO:
+            yield None
+    for (codes, auxiliary), group in groups.items():
+        provision = -sum((net(row) for _, row in group), ZERO)
+        if provision <= ZERO:
+            continue
+        original = {
+            index: row for index, row in subjects(rows, codes)
+            if gross_account(row.account_code)
+            and (not by_auxiliary or row.aux_name == auxiliary)
+        }
+        if ((by_auxiliary and auxiliary is None)
+                or any(not any(matches(row, code) for row in original.values()) for code in codes)):
+            yield None
+            continue
+        gross = sum((max(net(row), ZERO) for row in original.values()), ZERO)
+        excess = provision - gross
+        if excess > tolerance:
+            index, row = group[0]
+            yield f"{TB_SHEET}!{index}（组内 {len(group)} 行）", subject(row), -provision, {
+                "balance": f"{-provision:.2f}", "gross": f"{gross:.2f}", "excess": f"{excess:.2f}"}
+
+
+def routed_observations(data, rule, pairs, account_matches):
+    condition = rule["condition"]
+    check = rule["check_type"]
+    def selected_account(code):
+        return account_matches(rule["account_pattern"], code)
+
+    if check == "gl_keyword_alert":
+        return summary_observations(data.gl, selected_account, condition["keywords"])
+    tolerance = Decimal(condition["tolerance"])
+    if check == "debit_credit_balance":
+        return voucher_differences(data.gl, tolerance)
+    if check == "period_end_nonzero":
+        return post_close_balances(data.tb, selected_account, tolerance, root_only=condition.get("root_only", False))
+    if check == "contra_exceeds_gross":
+        def gross_account(code):
+            return account_matches(condition["gross_account_pattern"], code)
+
+        return contra_observations(data.tb, selected_account, gross_account, condition, tolerance, pairs)
+    return direction_observations(data.tb, selected_account, condition, tolerance)
+
+
+def scan_routed(data, account_codes, *, complete_vouchers=False, period_closed=False,
+                currency_exchange_closed=False, account_pairs=None, account_names=None, project_root=ROOT):
+    """Screen selected modules with explicitly confirmed ledger and receivable scope."""
+    approved_names = confirmed_account_names(account_names)
+    route = route_cas(account_codes, account_names=approved_names, project_root=project_root)
+    context = {"complete_vouchers": complete_vouchers, "period_closed": period_closed,
+               "currency_exchange_closed": currency_exchange_closed}
+
+    def account_matches(pattern, code):
+        if pattern["type"] == "names":
+            return code in route.named_codes and matches_account(pattern, code, approved_names)
+        return ((not route.named_codes or route.named_codes.isdisjoint(account_hierarchy(code)))
+                and matches_account(pattern, code))
+
+    try:
+        pairs = {account_code(prefix): tuple(sorted(code_list(codes)))
+                 for prefix, codes in (account_pairs or {}).items()}
+    except (TypeError, ValueError, AttributeError):
+        raise AuditError("CAS 备抵科目配对无效。请核对已确认的应收范围。") from None
+    rules, findings, deferred = {}, [], []
+    for rule_id, rule in load_routed_rules(route).items():
+        rules[rule_id] = Rule((), f"{rule['severity']} {rule_id}", rule["cas_ref"], "")
+        condition = rule["condition"]
+        if condition.get("root_only") and not any(
+            account_matches(rule["account_pattern"], row.account_code) for row in data.tb
+        ):
+            continue
+        required = condition.get("requires_context")
+        if (required is not None and context[required] is not True
+                or rule["check_type"] == "contra_exceeds_gross" and not pairs):
+            deferred.append(rule_id)
+            continue
+        for observation in routed_observations(data, rule, pairs, account_matches):
+            if observation is None:
+                if rule_id not in deferred:
+                    deferred.append(rule_id)
+                continue
+            position, label, balance, variables = observation
+            detail = Template(rule["message_template"]).substitute(variables)
+            entry = rule["suggested_entry"]
+            gross = Decimal(variables["gross"]) if "gross" in variables else None
+            if entry is None:
+                findings.append(Finding(rule_id, position, label, balance, detail, gross=gross))
+                continue
+            debit, credit = (Template(entry[field]).substitute(variables) for field in ("debit", "credit"))
+            amount = Decimal(Template(entry["amount"]).substitute(variables)) if entry["amount"] else None
+            findings.append(Finding(rule_id, position, label, balance, detail,
+                                    f"{entry['type']} 待复核", debit, credit, amount, gross))
+    return RoutedScan(route, rules, tuple(findings), tuple(deferred))
 
 
 def write_cas_sheet(book, rules, findings):

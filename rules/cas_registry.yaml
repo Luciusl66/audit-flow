@@ -1,0 +1,609 @@
+schema_version: 1
+# status 跟踪实务卡片与规则的整体提炼进度；适用版本另行核实。
+priority_basis: "一般工商业企业常规审计底稿的使用频次。P0高频、P1中频、P2低频。"
+raw_source_dir: docs/cas_raw
+# 正则仅匹配文件名。命中多个版本时由复核人确认报告期适用版本。
+application_guides:
+  general_raw_source_pattern:
+    - '^(?:企业会计准则[\s_—-]*)?应用指南(?:汇编)?(?:[（(][^）)]*[）)])?\.md$'
+    - '^(?:企业会计准则[\s_—-]*)?会计科目和主要账务处理(?:[（(][^）)]*[）)])?\.md$'
+    - '^1\.主要科目与主要账务处理[（(]2006[）)]\.md$'
+  official_url: https://www.mof.gov.cn/caizhengkuaiji/caizhengxinwen/200805/t20080519_24574.htm
+official_catalog:
+  - https://kjs.mof.gov.cn/zt/kjzzss/kuaijizhunzeshishi/
+  - https://kjs.mof.gov.cn/zt/kjzzss/kuaijizhunzeshishi/index_1.htm
+  - https://kjs.mof.gov.cn/zt/kjzzss/kuaijizhunzeshishi/index_2.htm
+  - https://kjs.mof.gov.cn/zt/kjzzss/kuaijizhunzeshishi/index_3.htm
+  - https://kjs.mof.gov.cn/zt/kjzzss/kuaijizhunzeshishi/index_4.htm
+standards:
+  - cas_no: 0
+    name: "企业会计准则——基本准则"
+    priority: P0高频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:基本准则|CAS[\s_.-]*0{1,2}(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?基本准则(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:基本准则|CAS[\s_.-]*0{1,2}(?![0-9]))|基本准则)).*\.md$'
+    md_path: references/cas/cas_00_basic.md
+    yaml_path: rules/cas/cas_00_basic.yaml
+    status: distilled
+    online_sources:
+      standard: https://docs.maoyanqing.com/accounting/ent/cas/00.html
+      guide_2024: https://docs.maoyanqing.com/accounting/ent/casg/00.html
+      accounting_appendix: https://docs.maoyanqing.com/accounting/ent/or/20061030.html
+    applicability: review_report_period
+    official_url: https://tfs.mof.gov.cn/caizhengbuling/201407/t20140729_1119494.htm
+  - cas_no: 1
+    name: "企业会计准则第1号——存货"
+    priority: P0高频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*0?1\s*号|CAS[\s_.-]*0?1(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?存货(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*0?1\s*号|CAS[\s_.-]*0?1(?![0-9]))|存货)).*\.md$'
+    md_path: references/cas/cas_01_inventory.md
+    yaml_path: rules/cas/cas_01_inventory.yaml
+    status: distilled
+    online_sources:
+      standard: https://docs.maoyanqing.com/accounting/ent/cas/01.html
+      guide_2024: https://docs.maoyanqing.com/accounting/ent/casg/01.html
+    applicability: review_report_period
+  - cas_no: 2
+    name: "企业会计准则第2号——长期股权投资"
+    priority: P0高频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*0?2\s*号|CAS[\s_.-]*0?2(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?长期股权投资(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*0?2\s*号|CAS[\s_.-]*0?2(?![0-9]))|长期股权投资)).*\.md$'
+    md_path: references/cas/cas_02_long_term_equity_investments.md
+    yaml_path: rules/cas/cas_02_long_term_equity_investments.yaml
+    status: distilled
+    online_sources:
+      standard: https://docs.maoyanqing.com/accounting/ent/cas/02.html
+      guide_2024: https://docs.maoyanqing.com/accounting/ent/casg/02.html
+    applicability: review_report_period
+  - cas_no: 3
+    name: "企业会计准则第3号——投资性房地产"
+    priority: P1中频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*0?3\s*号|CAS[\s_.-]*0?3(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?投资性房地产(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*0?3\s*号|CAS[\s_.-]*0?3(?![0-9]))|投资性房地产)).*\.md$'
+    md_path: references/cas/cas_03_investment_property.md
+    yaml_path: rules/cas/cas_03_investment_property.yaml
+    status: stub
+    applicability: review_report_period
+  - cas_no: 4
+    name: "企业会计准则第4号——固定资产"
+    priority: P0高频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*0?4\s*号|CAS[\s_.-]*0?4(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?固定资产(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*0?4\s*号|CAS[\s_.-]*0?4(?![0-9]))|固定资产)).*\.md$'
+    md_path: references/cas/cas_04_fixed_assets.md
+    yaml_path: rules/cas/cas_04_fixed_assets.yaml
+    status: distilled
+    online_sources:
+      standard: https://docs.maoyanqing.com/accounting/ent/cas/04.html
+      guide_2024: https://docs.maoyanqing.com/accounting/ent/casg/04.html
+    applicability: review_report_period
+  - cas_no: 5
+    name: "企业会计准则第5号——生物资产"
+    priority: P2低频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*0?5\s*号|CAS[\s_.-]*0?5(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?生物资产(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*0?5\s*号|CAS[\s_.-]*0?5(?![0-9]))|生物资产)).*\.md$'
+    md_path: references/cas/cas_05_biological_assets.md
+    yaml_path: rules/cas/cas_05_biological_assets.yaml
+    status: stub
+    applicability: review_report_period
+  - cas_no: 6
+    name: "企业会计准则第6号——无形资产"
+    priority: P0高频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*0?6\s*号|CAS[\s_.-]*0?6(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?无形资产(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*0?6\s*号|CAS[\s_.-]*0?6(?![0-9]))|无形资产)).*\.md$'
+    md_path: references/cas/cas_06_intangible_assets.md
+    yaml_path: rules/cas/cas_06_intangible_assets.yaml
+    status: distilled
+    online_sources:
+      standard: https://docs.maoyanqing.com/accounting/ent/cas/06.html
+      guide_2024: https://docs.maoyanqing.com/accounting/ent/casg/06.html
+    applicability: review_report_period
+  - cas_no: 7
+    name: "企业会计准则第7号——非货币性资产交换"
+    priority: P1中频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*0?7\s*号|CAS[\s_.-]*0?7(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?非货币性资产交换(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*0?7\s*号|CAS[\s_.-]*0?7(?![0-9]))|非货币性资产交换)).*\.md$'
+    md_path: references/cas/cas_07_nonmonetary_asset_exchange.md
+    yaml_path: rules/cas/cas_07_nonmonetary_asset_exchange.yaml
+    status: stub
+    applicability: review_report_period
+  - cas_no: 8
+    name: "企业会计准则第8号——资产减值"
+    priority: P0高频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*0?8\s*号|CAS[\s_.-]*0?8(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?资产减值(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*0?8\s*号|CAS[\s_.-]*0?8(?![0-9]))|资产减值)).*\.md$'
+    md_path: references/cas/cas_08_asset_impairment.md
+    yaml_path: rules/cas/cas_08_asset_impairment.yaml
+    status: distilled
+    online_sources:
+      standard: https://docs.maoyanqing.com/accounting/ent/cas/08.html
+      guide_2024: https://docs.maoyanqing.com/accounting/ent/casg/08.html
+    applicability: review_report_period
+  - cas_no: 9
+    name: "企业会计准则第9号——职工薪酬"
+    priority: P0高频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*0?9\s*号|CAS[\s_.-]*0?9(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?职工薪酬(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*0?9\s*号|CAS[\s_.-]*0?9(?![0-9]))|职工薪酬)).*\.md$'
+    md_path: references/cas/cas_09_employee_benefits.md
+    yaml_path: rules/cas/cas_09_employee_benefits.yaml
+    status: distilled
+    online_sources:
+      standard: https://docs.maoyanqing.com/accounting/ent/cas/09.html
+      guide_2024: https://docs.maoyanqing.com/accounting/ent/casg/09.html
+    applicability: review_report_period
+  - cas_no: 10
+    name: "企业会计准则第10号——企业年金基金"
+    priority: P2低频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*10\s*号|CAS[\s_.-]*10(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?企业年金基金(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*10\s*号|CAS[\s_.-]*10(?![0-9]))|企业年金基金)).*\.md$'
+    md_path: references/cas/cas_10_enterprise_annuity_fund.md
+    yaml_path: rules/cas/cas_10_enterprise_annuity_fund.yaml
+    status: stub
+    applicability: review_report_period
+  - cas_no: 11
+    name: "企业会计准则第11号——股份支付"
+    priority: P1中频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*11\s*号|CAS[\s_.-]*11(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?股份支付(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*11\s*号|CAS[\s_.-]*11(?![0-9]))|股份支付)).*\.md$'
+    md_path: references/cas/cas_11_share_based_payment.md
+    yaml_path: rules/cas/cas_11_share_based_payment.yaml
+    status: stub
+    applicability: review_report_period
+  - cas_no: 12
+    name: "企业会计准则第12号——债务重组"
+    priority: P1中频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*12\s*号|CAS[\s_.-]*12(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?债务重组(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*12\s*号|CAS[\s_.-]*12(?![0-9]))|债务重组)).*\.md$'
+    md_path: references/cas/cas_12_debt_restructuring.md
+    yaml_path: rules/cas/cas_12_debt_restructuring.yaml
+    status: stub
+    applicability: review_report_period
+  - cas_no: 13
+    name: "企业会计准则第13号——或有事项"
+    priority: P0高频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*13\s*号|CAS[\s_.-]*13(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?或有事项(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*13\s*号|CAS[\s_.-]*13(?![0-9]))|或有事项)).*\.md$'
+    md_path: references/cas/cas_13_contingencies.md
+    yaml_path: rules/cas/cas_13_contingencies.yaml
+    status: distilled
+    online_sources:
+      standard: https://docs.maoyanqing.com/accounting/ent/cas/13.html
+      guide_2024: https://docs.maoyanqing.com/accounting/ent/casg/13.html
+    applicability: review_report_period
+  - cas_no: 14
+    name: "企业会计准则第14号——收入"
+    priority: P0高频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*14\s*号|CAS[\s_.-]*14(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?收入(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*14\s*号|CAS[\s_.-]*14(?![0-9]))|收入)).*\.md$'
+    md_path: references/cas/cas_14_revenue.md
+    yaml_path: rules/cas/cas_14_revenue.yaml
+    status: distilled
+    online_sources:
+      standard: https://docs.maoyanqing.com/accounting/ent/cas/14.html
+      guide_2024: https://docs.maoyanqing.com/accounting/ent/casg/14.html
+    applicability: review_report_period
+  - cas_no: 15
+    name: "企业会计准则第15号——建造合同"
+    priority: P2低频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*15\s*号|CAS[\s_.-]*15(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?建造合同(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*15\s*号|CAS[\s_.-]*15(?![0-9]))|建造合同)).*\.md$'
+    md_path: references/cas/cas_15_construction_contracts.md
+    yaml_path: rules/cas/cas_15_construction_contracts.yaml
+    status: stub
+    applicability: historical
+    replaced_by: 14
+    version_note: "采用财会〔2017〕22号新收入准则的企业不再执行第15号。仅索引历史期间。"
+    official_url: https://m.mof.gov.cn/zcfb/201707/t20170719_2653110.htm
+  - cas_no: 16
+    name: "企业会计准则第16号——政府补助"
+    priority: P0高频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*16\s*号|CAS[\s_.-]*16(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?政府补助(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*16\s*号|CAS[\s_.-]*16(?![0-9]))|政府补助)).*\.md$'
+    md_path: references/cas/cas_16_government_grants.md
+    yaml_path: rules/cas/cas_16_government_grants.yaml
+    status: distilled
+    online_sources:
+      standard: https://docs.maoyanqing.com/accounting/ent/cas/16.html
+      guide_2024: https://docs.maoyanqing.com/accounting/ent/casg/16.html
+    applicability: review_report_period
+  - cas_no: 17
+    name: "企业会计准则第17号——借款费用"
+    priority: P1中频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*17\s*号|CAS[\s_.-]*17(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?借款费用(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*17\s*号|CAS[\s_.-]*17(?![0-9]))|借款费用)).*\.md$'
+    md_path: references/cas/cas_17_borrowing_costs.md
+    yaml_path: rules/cas/cas_17_borrowing_costs.yaml
+    status: stub
+    applicability: review_report_period
+  - cas_no: 18
+    name: "企业会计准则第18号——所得税"
+    priority: P0高频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*18\s*号|CAS[\s_.-]*18(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?所得税(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*18\s*号|CAS[\s_.-]*18(?![0-9]))|所得税)).*\.md$'
+    md_path: references/cas/cas_18_income_taxes.md
+    yaml_path: rules/cas/cas_18_income_taxes.yaml
+    status: distilled
+    online_sources:
+      standard: https://docs.maoyanqing.com/accounting/ent/cas/18.html
+      guide_2024: https://docs.maoyanqing.com/accounting/ent/casg/18.html
+    applicability: review_report_period
+  - cas_no: 19
+    name: "企业会计准则第19号——外币折算"
+    priority: P0高频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*19\s*号|CAS[\s_.-]*19(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?外币折算(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*19\s*号|CAS[\s_.-]*19(?![0-9]))|外币折算)).*\.md$'
+    md_path: references/cas/cas_19_foreign_currency_translation.md
+    yaml_path: rules/cas/cas_19_foreign_currency_translation.yaml
+    status: distilled
+    online_sources:
+      standard: https://docs.maoyanqing.com/accounting/ent/cas/19.html
+      guide_2024: https://docs.maoyanqing.com/accounting/ent/casg/19.html
+    applicability: review_report_period
+  - cas_no: 20
+    name: "企业会计准则第20号——企业合并"
+    priority: P1中频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*20\s*号|CAS[\s_.-]*20(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?企业合并(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*20\s*号|CAS[\s_.-]*20(?![0-9]))|企业合并)).*\.md$'
+    md_path: references/cas/cas_20_business_combinations.md
+    yaml_path: rules/cas/cas_20_business_combinations.yaml
+    status: stub
+    applicability: review_report_period
+  - cas_no: 21
+    name: "企业会计准则第21号——租赁"
+    priority: P0高频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*21\s*号|CAS[\s_.-]*21(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?租赁(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*21\s*号|CAS[\s_.-]*21(?![0-9]))|租赁)).*\.md$'
+    md_path: references/cas/cas_21_leases.md
+    yaml_path: rules/cas/cas_21_leases.yaml
+    status: distilled
+    online_sources:
+      standard: https://docs.maoyanqing.com/accounting/ent/cas/21.html
+      guide_2024: https://docs.maoyanqing.com/accounting/ent/casg/21.html
+    applicability: review_report_period
+  - cas_no: 22
+    name: "企业会计准则第22号——金融工具确认和计量"
+    priority: P0高频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*22\s*号|CAS[\s_.-]*22(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?金融工具确认和计量(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*22\s*号|CAS[\s_.-]*22(?![0-9]))|金融工具确认和计量)).*\.md$'
+    md_path: references/cas/cas_22_financial_instruments_recognition_measurement.md
+    yaml_path: rules/cas/cas_22_financial_instruments_recognition_measurement.yaml
+    status: distilled
+    online_sources:
+      standard: https://docs.maoyanqing.com/accounting/ent/cas/22.html
+      guide_2024: https://docs.maoyanqing.com/accounting/ent/casg/22.html
+    applicability: review_report_period
+  - cas_no: 23
+    name: "企业会计准则第23号——金融资产转移"
+    priority: P1中频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*23\s*号|CAS[\s_.-]*23(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?金融资产转移(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*23\s*号|CAS[\s_.-]*23(?![0-9]))|金融资产转移)).*\.md$'
+    md_path: references/cas/cas_23_financial_asset_transfers.md
+    yaml_path: rules/cas/cas_23_financial_asset_transfers.yaml
+    status: stub
+    applicability: review_report_period
+  - cas_no: 24
+    name: "企业会计准则第24号——套期会计"
+    priority: P2低频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*24\s*号|CAS[\s_.-]*24(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?套期会计(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*24\s*号|CAS[\s_.-]*24(?![0-9]))|套期会计)).*\.md$'
+    md_path: references/cas/cas_24_hedge_accounting.md
+    yaml_path: rules/cas/cas_24_hedge_accounting.yaml
+    status: stub
+    applicability: review_report_period
+  - cas_no: 25
+    name: "企业会计准则第25号——保险合同"
+    priority: P2低频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*25\s*号|CAS[\s_.-]*25(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?保险合同(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*25\s*号|CAS[\s_.-]*25(?![0-9]))|保险合同)).*\.md$'
+    md_path: references/cas/cas_25_insurance_contracts.md
+    yaml_path: rules/cas/cas_25_insurance_contracts.yaml
+    status: stub
+    applicability: transition
+    version_note: "财会〔2020〕20号修订为《保险合同》。财会〔2025〕12号规定其他执行企业会计准则的企业自2026年1月1日起执行，并对确有困难的保险公司设有申报暂缓安排。需核对主体实际执行日。"
+    official_url: https://kjs.mof.gov.cn/zhengcefabu/202506/t20250612_3965538.htm
+  - cas_no: 26
+    name: "企业会计准则第26号——再保险合同"
+    priority: P2低频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*26\s*号|CAS[\s_.-]*26(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?再保险合同(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*26\s*号|CAS[\s_.-]*26(?![0-9]))|再保险合同)).*\.md$'
+    md_path: references/cas/cas_26_reinsurance_contracts.md
+    yaml_path: rules/cas/cas_26_reinsurance_contracts.yaml
+    status: stub
+    applicability: historical_or_deferred
+    replaced_by: 25
+    version_note: "执行财会〔2020〕20号新保险合同准则后停止适用。历史期间或获准暂缓执行的情形单独核对。"
+    official_url: https://m.mof.gov.cn/czxw/202012/t20201223_3636695.htm
+  - cas_no: 27
+    name: "企业会计准则第27号——石油天然气开采"
+    priority: P2低频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*27\s*号|CAS[\s_.-]*27(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?石油天然气开采(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*27\s*号|CAS[\s_.-]*27(?![0-9]))|石油天然气开采)).*\.md$'
+    md_path: references/cas/cas_27_oil_and_gas_extraction.md
+    yaml_path: rules/cas/cas_27_oil_and_gas_extraction.yaml
+    status: stub
+    applicability: review_report_period
+  - cas_no: 28
+    name: "企业会计准则第28号——会计政策、会计估计变更和差错更正"
+    priority: P0高频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*28\s*号|CAS[\s_.-]*28(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?会计政策、会计估计变更和差错更正(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*28\s*号|CAS[\s_.-]*28(?![0-9]))|会计政策、会计估计变更和差错更正)).*\.md$'
+    md_path: references/cas/cas_28_accounting_policies_estimates_errors.md
+    yaml_path: rules/cas/cas_28_accounting_policies_estimates_errors.yaml
+    status: distilled
+    online_sources:
+      standard: https://docs.maoyanqing.com/accounting/ent/cas/28.html
+      guide_2024: https://docs.maoyanqing.com/accounting/ent/casg/28.html
+    applicability: review_report_period
+  - cas_no: 29
+    name: "企业会计准则第29号——资产负债表日后事项"
+    priority: P0高频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*29\s*号|CAS[\s_.-]*29(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?资产负债表日后事项(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*29\s*号|CAS[\s_.-]*29(?![0-9]))|资产负债表日后事项)).*\.md$'
+    md_path: references/cas/cas_29_subsequent_events.md
+    yaml_path: rules/cas/cas_29_subsequent_events.yaml
+    status: distilled
+    online_sources:
+      standard: https://docs.maoyanqing.com/accounting/ent/cas/29.html
+      guide_2024: https://docs.maoyanqing.com/accounting/ent/casg/29.html
+    applicability: review_report_period
+  - cas_no: 30
+    name: "企业会计准则第30号——财务报表列报"
+    priority: P0高频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*30\s*号|CAS[\s_.-]*30(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?财务报表列报(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*30\s*号|CAS[\s_.-]*30(?![0-9]))|财务报表列报)).*\.md$'
+    md_path: references/cas/cas_30_financial_statement_presentation.md
+    yaml_path: rules/cas/cas_30_financial_statement_presentation.yaml
+    status: distilled
+    online_sources:
+      standard: https://docs.maoyanqing.com/accounting/ent/cas/30.html
+      guide_2024: https://docs.maoyanqing.com/accounting/ent/casg/30.html
+      standard_2026: https://docs.maoyanqing.com/accounting/ent/cas/30b.html
+      implementation_notice: https://kjs.mof.gov.cn/zhengcefabu/202608/t20260805_3994927.htm
+      accounting_appendix: https://docs.maoyanqing.com/accounting/ent/or/20061030.html
+    applicability: transition
+    version_note: "财会〔2026〕11号按主体分批自2027、2029、2030年1月1日执行，允许提前执行。执行新版前核对财会〔2014〕7号及适用期间。"
+    official_url: https://nb.mof.gov.cn/czjg/tongzhitonggao/202608/t20260825_3996069.htm
+  - cas_no: 31
+    name: "企业会计准则第31号——现金流量表"
+    priority: P0高频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*31\s*号|CAS[\s_.-]*31(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?现金流量表(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*31\s*号|CAS[\s_.-]*31(?![0-9]))|现金流量表)).*\.md$'
+    md_path: references/cas/cas_31_cash_flow_statements.md
+    yaml_path: rules/cas/cas_31_cash_flow_statements.yaml
+    status: distilled
+    online_sources:
+      standard: https://docs.maoyanqing.com/accounting/ent/cas/31.html
+      guide_2024: https://docs.maoyanqing.com/accounting/ent/casg/31.html
+    applicability: review_report_period
+  - cas_no: 32
+    name: "企业会计准则第32号——中期财务报告"
+    priority: P1中频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*32\s*号|CAS[\s_.-]*32(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?中期财务报告(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*32\s*号|CAS[\s_.-]*32(?![0-9]))|中期财务报告)).*\.md$'
+    md_path: references/cas/cas_32_interim_financial_reporting.md
+    yaml_path: rules/cas/cas_32_interim_financial_reporting.yaml
+    status: stub
+    applicability: review_report_period
+  - cas_no: 33
+    name: "企业会计准则第33号——合并财务报表"
+    priority: P0高频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*33\s*号|CAS[\s_.-]*33(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?合并财务报表(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*33\s*号|CAS[\s_.-]*33(?![0-9]))|合并财务报表)).*\.md$'
+    md_path: references/cas/cas_33_consolidated_financial_statements.md
+    yaml_path: rules/cas/cas_33_consolidated_financial_statements.yaml
+    status: distilled
+    online_sources:
+      standard: https://docs.maoyanqing.com/accounting/ent/cas/33.html
+      guide_2024: https://docs.maoyanqing.com/accounting/ent/casg/33.html
+    applicability: review_report_period
+  - cas_no: 34
+    name: "企业会计准则第34号——每股收益"
+    priority: P2低频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*34\s*号|CAS[\s_.-]*34(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?每股收益(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*34\s*号|CAS[\s_.-]*34(?![0-9]))|每股收益)).*\.md$'
+    md_path: references/cas/cas_34_earnings_per_share.md
+    yaml_path: rules/cas/cas_34_earnings_per_share.yaml
+    status: stub
+    applicability: review_report_period
+  - cas_no: 35
+    name: "企业会计准则第35号——分部报告"
+    priority: P2低频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*35\s*号|CAS[\s_.-]*35(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?分部报告(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*35\s*号|CAS[\s_.-]*35(?![0-9]))|分部报告)).*\.md$'
+    md_path: references/cas/cas_35_segment_reporting.md
+    yaml_path: rules/cas/cas_35_segment_reporting.yaml
+    status: stub
+    applicability: review_report_period
+  - cas_no: 36
+    name: "企业会计准则第36号——关联方披露"
+    priority: P0高频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*36\s*号|CAS[\s_.-]*36(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?关联方披露(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*36\s*号|CAS[\s_.-]*36(?![0-9]))|关联方披露)).*\.md$'
+    md_path: references/cas/cas_36_related_party_disclosures.md
+    yaml_path: rules/cas/cas_36_related_party_disclosures.yaml
+    status: distilled
+    online_sources:
+      standard: https://docs.maoyanqing.com/accounting/ent/cas/36.html
+      guide_2024: https://docs.maoyanqing.com/accounting/ent/casg/36.html
+    applicability: review_report_period
+  - cas_no: 37
+    name: "企业会计准则第37号——金融工具列报"
+    priority: P1中频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*37\s*号|CAS[\s_.-]*37(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?金融工具列报(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*37\s*号|CAS[\s_.-]*37(?![0-9]))|金融工具列报)).*\.md$'
+    md_path: references/cas/cas_37_financial_instruments_presentation.md
+    yaml_path: rules/cas/cas_37_financial_instruments_presentation.yaml
+    status: stub
+    applicability: review_report_period
+  - cas_no: 38
+    name: "企业会计准则第38号——首次执行企业会计准则"
+    priority: P2低频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*38\s*号|CAS[\s_.-]*38(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?首次执行企业会计准则(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*38\s*号|CAS[\s_.-]*38(?![0-9]))|首次执行企业会计准则)).*\.md$'
+    md_path: references/cas/cas_38_first_time_adoption.md
+    yaml_path: rules/cas/cas_38_first_time_adoption.yaml
+    status: stub
+    applicability: review_report_period
+  - cas_no: 39
+    name: "企业会计准则第39号——公允价值计量"
+    priority: P1中频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*39\s*号|CAS[\s_.-]*39(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?公允价值计量(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*39\s*号|CAS[\s_.-]*39(?![0-9]))|公允价值计量)).*\.md$'
+    md_path: references/cas/cas_39_fair_value_measurement.md
+    yaml_path: rules/cas/cas_39_fair_value_measurement.yaml
+    status: stub
+    applicability: review_report_period
+  - cas_no: 40
+    name: "企业会计准则第40号——合营安排"
+    priority: P1中频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*40\s*号|CAS[\s_.-]*40(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?合营安排(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*40\s*号|CAS[\s_.-]*40(?![0-9]))|合营安排)).*\.md$'
+    md_path: references/cas/cas_40_joint_arrangements.md
+    yaml_path: rules/cas/cas_40_joint_arrangements.yaml
+    status: stub
+    applicability: review_report_period
+  - cas_no: 41
+    name: "企业会计准则第41号——在其他主体中权益的披露"
+    priority: P1中频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*41\s*号|CAS[\s_.-]*41(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?在其他主体中权益的披露(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*41\s*号|CAS[\s_.-]*41(?![0-9]))|在其他主体中权益的披露)).*\.md$'
+    md_path: references/cas/cas_41_interests_in_other_entities.md
+    yaml_path: rules/cas/cas_41_interests_in_other_entities.yaml
+    status: stub
+    applicability: review_report_period
+  - cas_no: 42
+    name: "企业会计准则第42号——持有待售的非流动资产、处置组和终止经营"
+    priority: P1中频
+    raw_source_pattern:
+      standard:
+        - '(?i)^(?!.*(?:应用指南|应用指引))(?:(?=.*(?:第\s*42\s*号|CAS[\s_.-]*42(?![0-9]))).*|(?:企业会计准则[\s_—-]*)?持有待售的非流动资产、处置组和终止经营(?:[\s_—-].*|[（(].*[）)])?)\.md$'
+      application_guidance:
+        - '(?i)^(?=.*(?:应用指南|应用指引))(?=.*(?:(?:第\s*42\s*号|CAS[\s_.-]*42(?![0-9]))|持有待售的非流动资产、处置组和终止经营)).*\.md$'
+    md_path: references/cas/cas_42_held_for_sale.md
+    yaml_path: rules/cas/cas_42_held_for_sale.yaml
+    status: stub
+    applicability: review_report_period

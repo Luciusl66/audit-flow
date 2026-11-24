@@ -1,0 +1,23 @@
+# https://docs.maoyanqing.com/accounting/ent/cas/22.html
+# https://docs.maoyanqing.com/accounting/ent/casg/22.html
+schema_version: 1
+cas_no: 22
+name: 企业会计准则第22号——金融工具确认和计量
+status: distilled
+rules:
+  - rule_id: CAS22_TB_AR_ALLOWANCE_EXCEEDS_GROSS
+    cas_ref: 《企业会计准则第22号——金融工具确认和计量》第三十八、四十六至四十七、五十九条（一）及第六十三条；2024指南第二十二章十一「金融工具的减值」
+    severity: WARNING
+    target_scope: TB
+    account_pattern:
+      type: regex
+      value: ^(?:1231)(?:[._/-][A-Z0-9][A-Z0-9._/-]*)?$
+    check_type: contra_exceeds_gross
+    condition:
+      gross_account_pattern:
+        type: regex
+        value: ^(?:1121|1122|1221|1531)(?:[._/-][A-Z0-9][A-Z0-9._/-]*)?$
+      grouping: confirmed_scope
+      tolerance: '0.00'
+    suggested_entry: null
+    message_template: 同一已确认的应收范围内，准备贷方净额超过借方应收原值 ${gross}，差额 ${excess}。复核准备归属和减值模型。

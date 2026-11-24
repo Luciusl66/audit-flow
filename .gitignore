@@ -2,6 +2,8 @@
 !/data/raw/.gitkeep
 /data/output/*
 !/data/output/.gitkeep
+/docs/cas_raw/*
+!/docs/cas_raw/.gitkeep
 /.venv/
 __pycache__/
 *.py[cod]

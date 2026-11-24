@@ -1,0 +1,20 @@
+# https://docs.maoyanqing.com/accounting/ent/cas/06.html
+# https://docs.maoyanqing.com/accounting/ent/casg/06.html
+schema_version: 1
+cas_no: 6
+name: 企业会计准则第6号——无形资产
+status: distilled
+rules:
+  - rule_id: CAS06_TB_INTANGIBLE_DIRECTION
+    cas_ref: 《企业会计准则第6号——无形资产》第十二、十七至十八、二十四条
+    severity: WARNING
+    target_scope: TB
+    account_pattern:
+      type: regex
+      value: ^(?:1701)(?:[._/-][A-Z0-9][A-Z0-9._/-]*)?$
+    check_type: balance_direction
+    condition:
+      expected_direction: debit
+      tolerance: '0.00'
+    suggested_entry: null
+    message_template: 无形资产原值科目 ${account_code} 期末为贷方净额 ${balance}。请核对退出项目、冲销和摊销入账科目。

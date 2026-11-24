@@ -1,0 +1,53 @@
+# https://docs.maoyanqing.com/accounting/ent/cas/00.html
+# https://docs.maoyanqing.com/accounting/ent/casg/00.html
+# https://docs.maoyanqing.com/accounting/ent/or/20061030.html
+schema_version: 1
+cas_no: 0
+name: 企业会计准则——基本准则
+status: distilled
+rules:
+  - rule_id: CAS00_GL_VOUCHER_BALANCE
+    cas_ref: 《企业会计准则——基本准则》（2014年修订）第十一条
+    severity: ERROR
+    target_scope: GL
+    account_pattern:
+      type: all
+    check_type: debit_credit_balance
+    condition:
+      group_by:
+        - date
+        - voucher_no
+      tolerance: '0.00'
+      requires_context: complete_vouchers
+    suggested_entry: null
+    message_template: 完整凭证借贷差额为 ${difference}。核对凭证范围、借贷金额及遗漏行后再决定是否调整。
+  - rule_id: CAS00_TB_POST_CLOSE_PNL
+    cas_ref: 《企业会计准则——基本准则》（2014年修订）第七、三十七条；《会计科目和主要账务处理》「4103 本年利润」二
+    severity: WARNING
+    target_scope: TB
+    account_pattern:
+      type: regex
+      value: ^6[0-8][0-9]{2}(?:[._/-][A-Z0-9][A-Z0-9._/-]*)?$
+    check_type: period_end_nonzero
+    condition:
+      tolerance: '0.00'
+      requires_context: period_closed
+    suggested_entry:
+      type: AJE
+      debit: ${debit_account}
+      credit: ${credit_account}
+      amount: ${amount}
+    message_template: 已确认期末结转后，损益科目 ${account_code} 仍有期末净额 ${balance}。请核对漏结转或导出范围。
+  - rule_id: CAS00_TB_CASH_DIRECTION
+    cas_ref: 《企业会计准则——基本准则》第二十至二十二条；2006应用指南附录「1001 库存现金」；2024指南第二十二章四（一）「银行存款」及（二）「其他货币资金」
+    severity: WARNING
+    target_scope: TB
+    account_pattern:
+      type: regex
+      value: ^(?:1001|1002|1012)(?:[._/-][A-Z0-9][A-Z0-9._/-]*)?$
+    check_type: balance_direction
+    condition:
+      expected_direction: debit
+      tolerance: '0.00'
+    suggested_entry: null
+    message_template: 货币资金 ${account_code} 期末为贷方净额 ${balance}。请核对调账、银行透支及科目映射。

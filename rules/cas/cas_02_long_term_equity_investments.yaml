@@ -1,0 +1,20 @@
+# https://docs.maoyanqing.com/accounting/ent/cas/02.html
+# https://docs.maoyanqing.com/accounting/ent/casg/02.html
+schema_version: 1
+cas_no: 2
+name: 企业会计准则第2号——长期股权投资
+status: distilled
+rules:
+  - rule_id: CAS02_TB_EQUITY_INVESTMENT_DIRECTION
+    cas_ref: 《企业会计准则第2号——长期股权投资》（2014年修订）第七至十二、十八条
+    severity: WARNING
+    target_scope: TB
+    account_pattern:
+      type: regex
+      value: ^1511$
+    check_type: balance_direction
+    condition:
+      expected_direction: debit
+      tolerance: '0.00'
+    suggested_entry: null
+    message_template: 长期股权投资一级科目或其同代码辅助明细出现贷方净额 ${balance}。按被投资单位核对，核清权益法内部核算明细后再评价。

@@ -1,0 +1,20 @@
+# https://docs.maoyanqing.com/accounting/ent/cas/16.html
+# https://docs.maoyanqing.com/accounting/ent/casg/16.html
+schema_version: 1
+cas_no: 16
+name: 企业会计准则第16号——政府补助
+status: distilled
+rules:
+  - rule_id: CAS16_TB_DEFERRED_GRANT_DIRECTION
+    cas_ref: 《企业会计准则第16号——政府补助》第八、九、十五条及2024指南第十六章三（一）4「递延收益」
+    severity: WARNING
+    target_scope: TB
+    account_pattern:
+      type: regex
+      value: ^2401(?:[._/-][A-Z0-9][A-Z0-9._/-]*)?$
+    check_type: balance_direction
+    condition:
+      expected_direction: credit
+      tolerance: '0.00'
+    suggested_entry: null
+    message_template: 递延收益 ${account_code} 出现借方净额 ${balance}。若对应政府补助，按项目核对分摊、冲减、退回及余额归属。

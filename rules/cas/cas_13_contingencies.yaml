@@ -1,0 +1,20 @@
+# https://docs.maoyanqing.com/accounting/ent/cas/13.html
+# https://docs.maoyanqing.com/accounting/ent/casg/13.html
+schema_version: 1
+cas_no: 13
+name: 企业会计准则第13号——或有事项
+status: distilled
+rules:
+  - rule_id: CAS13_TB_PROVISION_DIRECTION
+    cas_ref: 《企业会计准则第13号——或有事项》第四至七、十二条
+    severity: WARNING
+    target_scope: TB
+    account_pattern:
+      type: regex
+      value: ^(?:2801)(?:[._/-][A-Z0-9][A-Z0-9._/-]*)?$
+    check_type: balance_direction
+    condition:
+      expected_direction: credit
+      tolerance: '0.00'
+    suggested_entry: null
+    message_template: 预计负债 ${account_code} 期末出现借方净额 ${balance}。请区分动用、冲回、结算和第三方补偿资产。

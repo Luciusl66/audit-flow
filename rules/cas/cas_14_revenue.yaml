@@ -1,0 +1,39 @@
+# https://docs.maoyanqing.com/accounting/ent/cas/14.html
+# https://docs.maoyanqing.com/accounting/ent/casg/14.html
+schema_version: 1
+cas_no: 14
+name: 企业会计准则第14号——收入
+status: distilled
+rules:
+  - rule_id: CAS14_TB_AR_CONTRACT_LIABILITY
+    cas_ref: 《企业会计准则第14号——收入》第四十一条及2024指南第十五章八「列示与披露」
+    severity: WARNING
+    target_scope: TB
+    account_pattern:
+      type: regex
+      value: ^(?:1122)(?:[._/-][A-Z0-9][A-Z0-9._/-]*)?$
+    check_type: reclassification
+    condition:
+      trigger_direction: credit
+      require_auxiliary: true
+      tolerance: '0.00'
+    suggested_entry:
+      type: RJE
+      debit: 应收账款
+      credit: 合同负债
+      amount: null
+    message_template: 应收辅助明细 ${account_code} 为贷方净额 ${balance}。逐合同证实已收或应收的对价对应尚未履约义务，剔除增值税部分，核对退款和冲销后再确定金额。
+  - rule_id: CAS14_TB_CONTRACT_LIABILITY_DIRECTION
+    cas_ref: 《企业会计准则第14号——收入》第四十一条及2024指南第十五章三（六）4「合同负债」
+    severity: WARNING
+    target_scope: TB
+    account_pattern:
+      type: names
+      values:
+        - 合同负债
+    check_type: balance_direction
+    condition:
+      expected_direction: credit
+      tolerance: '0.00'
+    suggested_entry: null
+    message_template: 经确认的合同负债 ${account_code} 出现借方净额 ${balance}。按合同核对收入结转、退款和冲销，另行区分可呈借贷双向的合同结算科目。

@@ -1,0 +1,233 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+title: Audit Flow CAS rule module
+description: >
+  版本 1 规则模块。stub 只保留结构，distilled 可提供规则。所有发现项进入人工复核，
+  severity 用于分级，分录模板仅提供建议。已提炼但没有可由 TB/GL 直接筛查的模块可使用空规则列表。
+type: object
+additionalProperties: false
+required: [schema_version, cas_no, name, status, rules]
+properties:
+  schema_version:
+    const: 1
+  cas_no:
+    type: integer
+    minimum: 0
+    maximum: 42
+  name:
+    type: string
+    minLength: 1
+  status:
+    enum: [stub, distilled]
+  rules:
+    type: array
+    items:
+      $ref: '#/$defs/rule'
+allOf:
+  - if:
+      properties:
+        status: {const: stub}
+    then:
+      properties:
+        rules: {maxItems: 0}
+$defs:
+  account_pattern:
+    type: object
+    additionalProperties: false
+    required: [type]
+    properties:
+      type:
+        enum: [all, prefix, regex, names]
+      value:
+        type: string
+        minLength: 1
+      values:
+        description: 按 Adapter 已核实的账套编码与科目名称精确匹配。
+        type: array
+        minItems: 1
+        uniqueItems: true
+        items: {type: string, minLength: 1}
+    oneOf:
+      - properties:
+          type: {const: all}
+        not:
+          anyOf: [{required: [value]}, {required: [values]}]
+      - properties:
+          type: {enum: [prefix, regex]}
+        required: [value]
+        not: {required: [values]}
+      - properties:
+          type: {const: names}
+        required: [values]
+        not: {required: [value]}
+  tolerance:
+    type: string
+    pattern: '^[0-9]+\.[0-9]{2}$'
+  tb_metric:
+    type: object
+    additionalProperties: false
+    required: [account_pattern, field]
+    properties:
+      account_pattern:
+        $ref: '#/$defs/account_pattern'
+      field:
+        enum: [open_debit, open_credit, period_debit, period_credit, close_debit, close_credit]
+  suggested_entry:
+    description: null 表示只提示核对。可用模板变量由具体算子提供。
+    type: [object, 'null']
+    additionalProperties: false
+    required: [type, debit, credit, amount]
+    properties:
+      type:
+        enum: [RJE, AJE]
+      debit:
+        type: string
+        minLength: 1
+      credit:
+        type: string
+        minLength: 1
+      amount:
+        type: [string, 'null']
+  rule:
+    type: object
+    additionalProperties: false
+    required: [rule_id, cas_ref, severity, target_scope, account_pattern, check_type, condition, suggested_entry, message_template]
+    properties:
+      rule_id:
+        type: string
+        pattern: '^CAS[0-9]{2}_[A-Z][A-Z0-9_]*$'
+      cas_ref:
+        type: string
+        minLength: 1
+      severity:
+        enum: [ERROR, WARNING, INFO]
+      target_scope:
+        enum: [TB, GL]
+      account_pattern:
+        $ref: '#/$defs/account_pattern'
+      check_type:
+        description: >
+          除 ratio_threshold 外的算子已接入按科目执行。
+          ratio_threshold 保留，启用前须实现执行与回归测试。
+        enum: [debit_credit_balance, balance_direction, reclassification, contra_exceeds_gross, period_end_nonzero, gl_keyword_alert, ratio_threshold]
+      condition:
+        type: object
+      suggested_entry:
+        $ref: '#/$defs/suggested_entry'
+      message_template:
+        type: string
+        minLength: 1
+    allOf:
+      - if:
+          properties:
+            account_pattern:
+              properties:
+                type: {const: names}
+        then:
+          properties:
+            check_type: {const: balance_direction}
+      - if:
+          properties:
+            check_type: {const: debit_credit_balance}
+        then:
+          properties:
+            target_scope: {const: GL}
+            account_pattern:
+              properties:
+                type: {const: all}
+            condition:
+              additionalProperties: false
+              required: [group_by, tolerance, requires_context]
+              properties:
+                group_by: {const: [date, voucher_no]}
+                tolerance: {$ref: '#/$defs/tolerance'}
+                requires_context: {const: complete_vouchers}
+      - if:
+          properties:
+            check_type: {const: period_end_nonzero}
+        then:
+          properties:
+            target_scope: {const: TB}
+            condition:
+              additionalProperties: false
+              required: [tolerance, requires_context]
+              properties:
+                tolerance: {$ref: '#/$defs/tolerance'}
+                requires_context: {enum: [period_closed, currency_exchange_closed]}
+                root_only:
+                  description: 仅检查一级科目的无辅助核算汇总行，避免把下级正常余额误判为未结转。
+                  type: boolean
+      - if:
+          properties:
+            check_type: {const: balance_direction}
+        then:
+          properties:
+            target_scope: {const: TB}
+            condition:
+              additionalProperties: false
+              required: [expected_direction, tolerance]
+              properties:
+                expected_direction: {enum: [debit, credit, zero]}
+                tolerance: {$ref: '#/$defs/tolerance'}
+      - if:
+          properties:
+            check_type: {const: reclassification}
+        then:
+          properties:
+            target_scope: {const: TB}
+            condition:
+              additionalProperties: false
+              required: [trigger_direction, require_auxiliary, tolerance]
+              properties:
+                trigger_direction: {enum: [debit, credit]}
+                require_auxiliary: {type: boolean}
+                tolerance: {$ref: '#/$defs/tolerance'}
+      - if:
+          properties:
+            check_type: {const: contra_exceeds_gross}
+        then:
+          properties:
+            target_scope: {const: TB}
+            condition:
+              additionalProperties: false
+              required: [gross_account_pattern, grouping, tolerance]
+              properties:
+                gross_account_pattern:
+                  $ref: '#/$defs/account_pattern'
+                  properties:
+                    type: {enum: [all, prefix, regex]}
+                grouping:
+                  description: 两种口径都需要 Adapter 或调用方提供已复核的备抵至原值科目配对。
+                  enum: [confirmed_scope, auxiliary]
+                tolerance: {$ref: '#/$defs/tolerance'}
+      - if:
+          properties:
+            check_type: {const: gl_keyword_alert}
+        then:
+          properties:
+            target_scope: {const: GL}
+            condition:
+              additionalProperties: false
+              required: [field, match, keywords]
+              properties:
+                field: {const: summary}
+                match: {const: contains}
+                keywords:
+                  type: array
+                  minItems: 1
+                  uniqueItems: true
+                  items: {type: string, minLength: 1}
+      - if:
+          properties:
+            check_type: {const: ratio_threshold}
+        then:
+          properties:
+            target_scope: {const: TB}
+            condition:
+              additionalProperties: false
+              required: [numerator, denominator, comparison, threshold, zero_denominator]
+              properties:
+                numerator: {$ref: '#/$defs/tb_metric'}
+                denominator: {$ref: '#/$defs/tb_metric'}
+                comparison: {enum: [gt, ge, lt, le]}
+                threshold: {type: string, pattern: '^-?[0-9]+(?:\.[0-9]+)?$'}
+                zero_denominator: {const: manual_review}
