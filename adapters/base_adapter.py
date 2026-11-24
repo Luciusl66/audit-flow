@@ -78,7 +78,10 @@ def mapped_rows(rows, exact_names, label, header_row=1):
             if cell.kind not in {"f", "e"} and cell.value == name
         ]
         if len(indexes) != 1:
-            raise AuditError(f"{label} 字段 {field} 缺失或映射不唯一。")
+            raise AuditError(
+                f"{label} 字段 {field} 缺失或映射不唯一。"
+                "请确认列名与脱敏探针输出逐字一致（含空格、全角/半角及标点）。"
+            )
         positions[field] = indexes[0]
     if len(set(positions.values())) != len(positions):
         raise AuditError(f"{label} 多个标准字段映射到了同一源列。")

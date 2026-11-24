@@ -9,7 +9,7 @@ from openpyxl.utils import get_column_letter, quote_sheetname
 from openpyxl.workbook.defined_name import DefinedName
 
 from core.fill_workpaper import (
-    AJE, AMOUNT_FORMAT, DETAIL, DETAIL_FIRST, DETAIL_HEADERS, DETAIL_TOTAL, RAW_TB_FIELDS,
+    ACCOUNT_KEY_PREFIX, AJE, AMOUNT_FORMAT, DETAIL, DETAIL_FIRST, DETAIL_HEADERS, DETAIL_TOTAL, RAW_TB_FIELDS,
     SUMMARY, SUMMARY_FIRST, SUMMARY_LABELS,
 )
 from core.schema import GL_FIELDS, GL_SHEET, TB_SHEET
@@ -54,7 +54,12 @@ def anchor(book, name, sheet, cell):
 
 
 def raw_sum(column):
-    return f'SUMIFS(Raw_TB!${column}:${column},Raw_TB!$L:$L,"acct:"&$B$3,Raw_TB!$C:$C,1,Raw_TB!$K:$K,"")'
+    # Match the prefixed account_key in hidden column L, level 1 in C and an empty
+    # aux_name in K. ACCOUNT_CODE excludes *, ? and ~ from the input in B3.
+    return (
+        f'SUMIFS(Raw_TB!${column}:${column},Raw_TB!$L:$L,"{ACCOUNT_KEY_PREFIX}"&$B$3,'
+        'Raw_TB!$C:$C,1,Raw_TB!$K:$K,"")'
+    )
 
 
 def template(path):

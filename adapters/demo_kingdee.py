@@ -29,8 +29,9 @@ def gl_amount(value):
 class Adapter(BaseAdapter):
     ar_account = "1122"
     tb_columns = TB_COLUMNS
-    # This synthetic chart uses 1231 solely for trade receivables.
-    cas_allowance_pairs = {"1231": ("1122",)}
+    # In this synthetic chart, 1231 covers trade receivables (1122) only. For a real
+    # chart, use a mapping such as {"1231": ("1122",)} after the data owner confirms the scope.
+    cas_allowance_pairs = {}
 
     def transform(self, tb_path, gl_path):
         tb_types = {

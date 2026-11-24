@@ -5,6 +5,7 @@ import unittest
 
 from openpyxl import Workbook
 
+from adapters.demo_kingdee import Adapter
 from core.cas_checker import CAS_SHEET, scan_tb, write_cas_sheet
 from core.schema import AuditError, StandardTB, ZERO
 
@@ -77,6 +78,20 @@ class CasCheckerTest(unittest.TestCase):
         _, exact = scan_tb((*rows, row("1122", "应收账款", debit="50")),
                            "1122", account_pairs={"1231": ("1122",)})
         self.assertEqual(exact, ())
+
+    def test_demo_adapter_reports_allowance_without_confirmed_mapping(self):
+        adapter = Adapter()
+        data = (row("1122", "应收账款", debit="100"), row("1231", "坏账准备", credit="50"))
+        rules, findings = scan_tb(data, adapter.ar_account, account_pairs=adapter.cas_allowance_pairs)
+        book = Workbook()
+        try:
+            write_cas_sheet(book, rules, findings)
+            sheet = book[CAS_SHEET]
+            self.assertEqual(sheet["B3"].value, 1)
+            self.assertIn("准备归属缺少已确认配对", sheet["F6"].value)
+            self.assertIsNone(sheet["E6"].value)
+        finally:
+            book.close()
 
     def test_same_party_checks_do_not_offset_excess_against_other_customers(self):
         rows = (

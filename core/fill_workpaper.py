@@ -22,6 +22,7 @@ DETAIL_HEADERS = ("科目编码", "客商 / 辅助核算", "期初净额", "本�
 SUMMARY_LABELS = ("期初净额", "本期借方", "本期贷方", "未审数", "审计调整", "审定数")
 AMOUNT_FORMAT = '#,##0.00;(#,##0.00);"-"'
 RAW_TB_FIELDS = (*TB_FIELDS, "account_key")
+ACCOUNT_KEY_PREFIX = "acct:"
 EXCEL_ROWS = 1_048_576
 
 
@@ -122,7 +123,10 @@ def write_data(sheet, names, rows):
     for index, row in enumerate(rows, start=2):
         values = astuple(row)
         if sheet.title == TB_SHEET:
-            values += (f"acct:{row.account_code}",)
+            # Summary SUMIFS matches this text key in hidden column L, level 1 in C,
+            # and empty auxiliary detail in K. The prefix keeps 001 and 1 distinct.
+            # ACCOUNT_CODE excludes the Excel wildcard characters *, ? and ~.
+            values += (f"{ACCOUNT_KEY_PREFIX}{row.account_code}",)
         for column, (field, value) in enumerate(zip(names, values, strict=True), start=1):
             cell = sheet.cell(index, column)
             literal(cell, value)

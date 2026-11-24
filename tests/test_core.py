@@ -4,16 +4,19 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 
-from adapters.base_adapter import source_totals
+from adapters.base_adapter import SourceCell, mapped_rows, source_totals
 from adapters.demo_kingdee import Adapter, GL_COLUMNS, TB_COLUMNS
 from core.fill_workpaper import DETAIL, DETAIL_TOTAL, SUMMARY, build, select_coverage
 from core.masker import profile
 from core.recalc import Cache, Calculation, formulas, scan, write_caches
-from core.reconcile import check_conservation, check_coverage, check_cross, check_excel
-from core.schema import GL_SHEET, TB_SHEET, validate
+from core.reconcile import REPORT, Gate, check_conservation, check_coverage, check_cross, check_excel, write_report
+from core.schema import AuditError, GL_SHEET, TB_SHEET, account_code, validate
+from run import store
+from scripts.generate_demo import raw_sum
 
 ROOT = Path(__file__).resolve().parents[1]
 MOCK = ROOT / "data" / "mock"
@@ -33,6 +36,24 @@ class WorkpaperTest(unittest.TestCase):
         for path, mapping in ((self.tb_path, TB_COLUMNS), (self.gl_path, GL_COLUMNS)):
             reported = {entry["header"] for entry in profile(path)["columns"]}
             self.assertTrue(set(mapping.values()) <= reported)
+
+    def test_mapping_error_explains_exact_header_match(self):
+        rows = iter([(SourceCell("科目名称 "),)])
+        with self.assertRaisesRegex(AuditError, "逐字一致（含空格、全角/半角及标点）"):
+            next(mapped_rows(rows, {"account_name": "科目名称"}, "TB"))
+
+    def test_output_store_distinguishes_missing_and_redirected_directories(self):
+        with TemporaryDirectory(dir=ROOT / "data" / "output") as temporary:
+            root = Path(temporary)
+            target = root / "data" / "output"
+            with patch("run.ROOT", root):
+                with self.assertRaisesRegex(AuditError, "项目数据目录缺失。"):
+                    store("output")
+                target.mkdir(parents=True)
+                self.assertEqual(store("output"), target)
+                with patch.object(type(target), "resolve", return_value=root / "redirected"):
+                    with self.assertRaisesRegex(AuditError, "出于数据安全.*符号链接或重定向"):
+                        store("output")
 
     def test_masking_keeps_shape_and_approved_direction_without_raw_text(self):
         with TemporaryDirectory(dir=ROOT / "data" / "output") as tmp:
@@ -70,7 +91,22 @@ class WorkpaperTest(unittest.TestCase):
         self.assertEqual(controls["close_debit"][2], Decimal("0.01"))
         truncated = replace(self.data, tb=self.data.tb[1:])
         gate, _ = check_conservation(truncated, *source)
-        self.assertTrue(any(issue[1] == "清洗前后数据行数不一致" for issue in gate.findings))
+        self.assertTrue(any("行数差：-1" in issue[1] for issue in gate.findings))
+
+    def test_report_lists_row_count_as_integer_text_without_money_format(self):
+        count, totals = source_totals(self.tb_path, self.adapter.tb_columns, self.adapter.tb_source, False)
+        gate, controls = check_conservation(self.data, count + 1, totals)
+        book = Workbook()
+        try:
+            gates = (gate, *(Gate("其他校验", "") for _ in range(3)))
+            write_report(book, gates, controls, (None, None, None), Calculation("xlwings", {}, ()))
+            sheet = book[REPORT]
+            message = next(cell for cell in sheet["E"] if "行数差" in str(cell.value))
+            self.assertEqual(message.value, "清洗前后数据行数不一致（行数差：-1）")
+            self.assertIsNone(sheet[f"D{message.row}"].value)
+            self.assertEqual(sheet[f"D{message.row}"].number_format, "General")
+        finally:
+            book.close()
 
     def test_uncovered_records_are_reported_and_preserved(self):
         gate = check_coverage(self.data, self.coverage)
@@ -89,6 +125,21 @@ class WorkpaperTest(unittest.TestCase):
         data = replace(self.data, tb=(*self.data.tb, peer))
         coverage = select_coverage(data, self.adapter.ar_account)
         self.assertTrue(set(self.coverage.detail_rows) < set(coverage.detail_rows))
+
+    def test_summary_criteria_and_text_key_share_the_account_code_contract(self):
+        code = account_code("001.2/3-4")
+        data = replace(self.data, tb=(replace(self.data.tb[0], account_code=code), *self.data.tb[1:]))
+        book, _ = build(TEMPLATE, data, select_coverage(data, code), code)
+        try:
+            self.assertEqual(book[SUMMARY]["B3"].value, code)
+            self.assertEqual(book[TB_SHEET]["L2"].value, f"acct:{code}")
+            self.assertEqual(book[TB_SHEET]["L2"].data_type, "s")
+            self.assertEqual(book[SUMMARY]["B7"].value, f"=ROUND({raw_sum('G')},2)")
+        finally:
+            book.close()
+        for wildcard in ("*", "?", "~"):
+            with self.subTest(wildcard=wildcard), self.assertRaises(ValueError):
+                account_code(f"001{wildcard}2")
 
     def test_template_formula_text_is_preserved_and_detail_expands(self):
         data = replace(self.data, gl=(replace(self.data.gl[0], summary="=1+1"), *self.data.gl[1:]))

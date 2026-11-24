@@ -1,6 +1,6 @@
 openpyxl>=3.1.5,<4
 pandas>=2.2,<4
-defusedxml>=0.7,<1
+defusedxml>=0.7.1,<1
 python-calamine>=0.9.1,<1
 PyYAML>=6,<7
 xlwings>=0.32,<1; platform_system == "Windows"

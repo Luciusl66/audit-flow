@@ -42,8 +42,9 @@ class Gate:
 
 def check_conservation(data, source_count, source):
     gate = Gate("1. 清洗前后守恒", "原始 TB 和标准 TB 的行数及六列借贷金额。容差 0.00。")
-    if source_count != len(data.tb):
-        gate.add("Standard_TB", "清洗前后数据行数不一致", Decimal(len(data.tb) - source_count))
+    row_difference = len(data.tb) - source_count
+    if row_difference:
+        gate.add("Standard_TB", f"清洗前后数据行数不一致（行数差：{row_difference:+d}）")
     controls = {}
     for name in TB_AMOUNT_FIELDS:
         original = source[name]
@@ -150,7 +151,8 @@ def write_report(book, gates, controls, balances, calculation):
     sheet.append([])
     sheet.append(["自动勾稽与校验报告"])
     sheet.append(["总体结论", "PASS" if passed else "FAILED"])
-    sheet.append(["重算后端", calculation.backend, None, "记录生成时的校验结果。编辑底稿后应重新复核。"])
+    sheet.append(["重算后端", calculation.backend, None, "记录生成时的校验结果。编辑底稿后应重新复核。",
+                  calculation.note or None])
     sheet.append([])
     sheet.append(["门禁", "结果", "异常数", "告警数", "检查范围"])
     for gate in gates:
@@ -174,7 +176,8 @@ def write_report(book, gates, controls, balances, calculation):
         for position, message, difference, warning in gate.findings:
             sheet.append([None, number, "告警" if warning else "异常", difference, message])
             literal(sheet.cell(sheet.max_row, 1), position)
-            sheet.cell(sheet.max_row, 4).number_format = DIFF_FORMAT
+            if difference is not None:
+                sheet.cell(sheet.max_row, 4).number_format = DIFF_FORMAT
         omitted = gate.failed - sum(not warning for *_, warning in gate.findings)
         if omitted:
             sheet.append([None, number, "异常", None, f"另有 {omitted} 项异常。"])
@@ -185,6 +188,10 @@ def write_report(book, gates, controls, balances, calculation):
             cell.font = Font(name="Microsoft YaHei", size=10, color="24384A")
             cell.alignment = Alignment(vertical="center")
         sheet.row_dimensions[row[0].row].height = 21
+    if calculation.note:
+        for cell in sheet[4][3:5]:
+            cell.alignment = Alignment(vertical="center", wrap_text=True)
+        sheet.row_dimensions[4].height = 35
     sheet["A2"].font = Font(name="Microsoft YaHei", size=15, bold=True, color="18324A")
     for index in (6, 12, 20, 23):
         for cell in sheet[index]:

@@ -50,8 +50,10 @@ def parse_args(argv):
 
 def store(name):
     path = ROOT / "data" / name
-    if not path.is_dir() or path.resolve() != path:
-        raise AuditError("项目数据目录缺失或已重定向。")
+    if path.resolve() != path:
+        raise AuditError("出于数据安全，项目 data/ 下的数据目录不允许使用符号链接或重定向。")
+    if not path.is_dir():
+        raise AuditError("项目数据目录缺失。")
     return path
 
 

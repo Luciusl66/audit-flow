@@ -12,6 +12,7 @@ CENT = Decimal("0.01")
 MAX_AMOUNT = Decimal("9999999999999.99")
 TB_AMOUNT_FIELDS = ("open_debit", "open_credit", "period_debit", "period_credit", "close_debit", "close_credit")
 DIRECTIONS = {"借": "借", "贷": "贷", "平": "平", "借方": "借", "贷方": "贷", "DEBIT": "借", "CREDIT": "贷", "BALANCED": "平"}
+# Keep Excel SUMIFS wildcard characters (*, ?, ~) out of normalized account codes.
 ACCOUNT_CODE = re.compile(r"[A-Z0-9][A-Z0-9._/-]{0,63}", re.ASCII)
 AMOUNT_TEXT = re.compile(r"[+-]?(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)(?:\.[0-9]+)?", re.ASCII)
 ILLEGAL_TEXT = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]")
