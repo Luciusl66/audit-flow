@@ -351,7 +351,7 @@ def scan_routed(data, account_codes, *, complete_vouchers=False, period_closed=F
     return RoutedScan(route, rules, tuple(findings), tuple(deferred))
 
 
-def write_cas_sheet(book, rules, findings):
+def write_cas_sheet(book, rules, findings, *, deferred_rule_ids=()):
     sheet = book.create_sheet(CAS_SHEET, 1)
     sheet.sheet_view.showGridLines = False
     sheet.sheet_properties.tabColor = "9B682F"
@@ -361,6 +361,7 @@ def write_cas_sheet(book, rules, findings):
     sheet["A4"] = "按报告期与适用准则复核。分录为草案，期末净额借正贷负。"
     sheet.append(("异常类型", "位置", "科目 / 客商", "期末净额", "应收原值", "异常及复核要点",
                   "准则依据", "建议类型", "借方", "贷方", "待确认金额"))
+    body_font = Font(name="Microsoft YaHei", size=10, color="24384A")
     for finding in findings:
         rule = rules[finding.rule_id]
         record = (rule.label, finding.position, finding.subject, finding.balance, finding.gross,
@@ -370,19 +371,40 @@ def write_cas_sheet(book, rules, findings):
         for column, value in enumerate(record, 1):
             cell = sheet.cell(row, column)
             literal(cell, value)
-            cell.font = Font(name="Microsoft YaHei", size=10, color="24384A")
+            cell.font = body_font
             cell.alignment = Alignment(vertical="center", wrap_text=isinstance(value, str))
+            # GL keyword alerts have no ending balance, so the formatted cell stays blank.
             if column in (4, 5, 11):
                 cell.number_format = '#,##0.00;(#,##0.00);0.00'
         sheet.row_dimensions[row].height = 78
     if not findings:
-        sheet["A6"] = "当前扫描规则未命中异常。"
+        sheet["A6"] = "已执行的规则未命中异常。" if deferred_rule_ids else "当前扫描规则未命中异常。"
     for column, width in enumerate((27, 20, 32, 16, 16, 55, 40, 19, 19, 19, 16), 1):
         sheet.column_dimensions[get_column_letter(column)].width = width
+    header_fill = PatternFill("solid", fgColor="263F56")
+    header_font = Font(name="Microsoft YaHei", size=10, bold=True, color="FFFFFF")
+    wrapped = Alignment(vertical="center", wrap_text=True)
     for cell in sheet[5]:
-        cell.fill = PatternFill("solid", fgColor="263F56")
-        cell.font = Font(name="Microsoft YaHei", size=10, bold=True, color="FFFFFF")
-        cell.alignment = Alignment(vertical="center", wrap_text=True)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = wrapped
     sheet.row_dimensions[5].height = 24
     sheet.freeze_panes = "C6"
     sheet.auto_filter.ref = f"A5:K{max(5, 5 + len(findings))}"
+    if deferred_rule_ids:
+        header = sheet.max_row + 2
+        note = "缺少上下文确认、已确认配对或一级汇总行，待数据持有人复核。"
+        rows = [("待核规则", "待核说明"), *((rule_id, note) for rule_id in deferred_rule_ids)]
+        for row, (label, reason) in enumerate(rows, header):
+            sheet.merge_cells(f"A{row}:B{row}")
+            sheet.merge_cells(f"C{row}:K{row}")
+            for column, value in ((1, label), (3, reason)):
+                cell = sheet.cell(row, column)
+                literal(cell, value)
+                cell.alignment = wrapped
+                if row == header:
+                    cell.fill = header_fill
+                    cell.font = header_font
+                else:
+                    cell.font = body_font
+            sheet.row_dimensions[row].height = 24

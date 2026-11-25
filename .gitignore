@@ -4,6 +4,7 @@
 !/data/output/.gitkeep
 /docs/cas_raw/*
 !/docs/cas_raw/.gitkeep
+!/docs/cas_raw/README.md
 /.venv/
 __pycache__/
 *.py[cod]

@@ -3,6 +3,7 @@
 import argparse
 from contextlib import redirect_stderr, redirect_stdout
 from importlib import import_module
+import json
 import os
 from pathlib import Path
 import re
@@ -12,7 +13,8 @@ from uuid import uuid4
 import warnings
 
 from adapters.base_adapter import BaseAdapter, source_totals
-from core.cas_checker import scan_tb, write_cas_sheet
+from core.cas_checker import scan_routed, scan_tb, write_cas_sheet
+from core.cas_routing import confirmed_account_names
 from core.fill_workpaper import build, select_coverage
 from core.masker import main as probe_main, safe_path
 from core.recalc import formulas, recalculate, write_caches
@@ -45,6 +47,12 @@ def parse_args(argv):
     parser.add_argument("--timeout", type=positive_integer, default=120, help="每个重算后端的超时秒数")
     parser.add_argument("--out", help="data/output 下的 ASCII XLSX 文件名")
     parser.add_argument("--local-amounts", action="store_true", help="仅供本地数据持有人输出真实输入的金额证据")
+    parser.add_argument("--cas-routed", action="store_true", help="启用按科目路由的 CAS 筛查")
+    parser.add_argument("--complete-vouchers", action="store_true", help="确认凭证已核对完整")
+    parser.add_argument("--period-closed", action="store_true", help="确认相关损益结转已完成")
+    parser.add_argument("--currency-closed", action="store_true",
+                        help="确认外币折算及汇兑结转已完成，且 TB 已统一为记账本位币")
+    parser.add_argument("--account-names", type=Path, metavar="FILE", help="已核实科目编码到名称的 JSON 映射")
     return parser.parse_args(argv)
 
 
@@ -68,7 +76,19 @@ def load_adapter(name):
     return adapter_type()
 
 
+def load_account_names(path):
+    try:
+        with path.open(encoding="utf-8-sig") as file:
+            names = json.load(file)
+    except (OSError, ValueError, RecursionError):
+        raise AuditError("无法读取 CAS 科目名称映射。请检查文件是否为有效的 UTF-8 JSON。") from None
+    if not isinstance(names, dict):
+        raise AuditError("CAS 科目名称映射须为科目编码到已核实名称的 JSON 对象。")
+    return confirmed_account_names(names)
+
+
 def generate(args):
+    account_names = load_account_names(args.account_names) if args.account_names is not None else None
     tb, tb_kind = safe_path(args.tb)
     gl, gl_kind = safe_path(args.gl)
     if tb_kind != gl_kind or tb.parent != gl.parent or tb.samefile(gl):
@@ -107,8 +127,16 @@ def generate(args):
                 calculation = recalculate(stage, actual, args.recalc, args.timeout)
                 gates, controls, balances = run_gates(data, source, coverage, layout, actual, calculation)
                 write_report(book, gates, controls, balances, calculation)
-                rules, findings = scan_tb(data.tb, ar_account, account_pairs=adapter.cas_allowance_pairs)
-                write_cas_sheet(book, rules, findings)
+                if args.cas_routed:
+                    account_codes = tuple(dict.fromkeys(row.account_code for row in data.tb))
+                    result = scan_routed(data, account_codes, account_names=account_names,
+                                         complete_vouchers=args.complete_vouchers, period_closed=args.period_closed,
+                                         currency_exchange_closed=args.currency_closed,
+                                         account_pairs=adapter.cas_allowance_pairs)
+                    write_cas_sheet(book, result.rules, result.findings, deferred_rule_ids=result.deferred_rule_ids)
+                else:
+                    rules, findings = scan_tb(data.tb, ar_account, account_pairs=adapter.cas_allowance_pairs)
+                    write_cas_sheet(book, rules, findings)
                 passed = all(gate.status == "PASS" for gate in gates)
                 book.save(stage)
             finally:
