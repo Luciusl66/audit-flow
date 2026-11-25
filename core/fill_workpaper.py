@@ -1,15 +1,26 @@
 """Populate source tabs and expand the AR detail without editing summary formulas."""
 
+from abc import ABC, abstractmethod
 from collections import defaultdict
+from contextlib import closing
 from copy import copy
 from dataclasses import astuple, dataclass
+from datetime import date
+from decimal import Decimal
+import json
+from shutil import copyfile
 from zipfile import ZipFile
 
 from defusedxml.ElementTree import fromstring
-from openpyxl import load_workbook
-from openpyxl.utils import get_column_letter, quote_sheetname
+from openpyxl import Workbook, load_workbook
+from openpyxl.utils import coordinate_to_tuple, get_column_letter, quote_sheetname
+from openpyxl.utils.datetime import to_excel
 from openpyxl.workbook.properties import CalcProperties
+from openpyxl.worksheet.cell_range import CellRange
 
+from core.blueprint import formula_signature, load_blueprint
+from core.excel_writer import excel_literal, require_excel_writer, run_excel_writer
+from core.recalc import formulas, write_caches
 from core.schema import AuditError, GL_FIELDS, GL_SHEET, TB_FIELDS, TB_SHEET, TB_AMOUNT_FIELDS
 
 DETAIL = "应收账款明细表"
@@ -23,7 +34,8 @@ SUMMARY_LABELS = ("期初净额", "本期借方", "本期贷方", "未审数", "
 AMOUNT_FORMAT = '#,##0.00;(#,##0.00);"-"'
 RAW_TB_FIELDS = (*TB_FIELDS, "account_key")
 ACCOUNT_KEY_PREFIX = "acct:"
-EXCEL_ROWS = 1_048_576
+AMOUNT_FIELDS = frozenset((*TB_AMOUNT_FIELDS, "debit", "credit"))
+TABLE_FORMATS = {**dict.fromkeys(AMOUNT_FIELDS, AMOUNT_FORMAT), "date": "yyyy-mm-dd", "level": "0"}
 
 
 @dataclass(frozen=True)
@@ -103,82 +115,270 @@ def check_template(path):
                     raise AuditError("模板包含外部关系。")
 
 
-def anchor_row(book, anchor, sheet, column):
+def tables(blueprint, data):
+    return ((blueprint.sheet(TB_SHEET), RAW_TB_FIELDS, data.tb),
+            (blueprint.sheet(GL_SHEET), GL_FIELDS, data.gl))
+
+
+def table_values(name, records):
+    for record in records:
+        values = astuple(record)
+        if name == TB_SHEET:
+            # The hidden text key keeps codes such as 001 and 1 distinct in SUMIFS.
+            values += (f"{ACCOUNT_KEY_PREFIX}{record.account_code}",)
+        yield values
+
+
+def reject_merged_writes(sheet, area):
+    for merged in sheet.merged_cells.ranges:
+        if area.isdisjoint(merged):
+            continue
+        if area.min_row == area.max_row == merged.min_row and area.min_col == area.max_col == merged.min_col:
+            continue
+        raise AuditError(f"工作表 {sheet.title} 的蓝图写入区域包含合并单元格的非锚点。")
+
+
+def prepare_layout(book, blueprint, data, coverage):
+    blueprint.validate(book, source="template")
+    summary, detail = blueprint.sheet(SUMMARY), blueprint.sheet(DETAIL)
     try:
-        [(name, address)] = book.defined_names[anchor].destinations
-        cell = book[name][address]
-        if name == sheet and cell.column == column:
-            return cell.row
-    except (AttributeError, KeyError, TypeError, ValueError):
-        pass
-    raise AuditError(f"模板锚点 {anchor} 无效。")
+        start, detail_column = coordinate_to_tuple(detail.anchors[DETAIL_FIRST])
+        initial_total, total_column = coordinate_to_tuple(detail.anchors[DETAIL_TOTAL])
+        summary_start, summary_column = coordinate_to_tuple(summary.anchors[SUMMARY_FIRST])
+    except KeyError:
+        raise AuditError("底稿蓝图缺少应收审定表或明细表锚点。") from None
+    if (detail_column != 1 or total_column != 1 or initial_total != start + 1 or summary_column != 2
+            or detail.data.min_row != start or detail.data.min_col != 1 or detail.data.max_col != len(DETAIL_HEADERS)
+            or detail.detail_formulas != CellRange(f"C{start}:F{initial_total}") or summary.data.coord != "B3"):
+        raise AuditError("底稿蓝图与应收工作表的写入布局不兼容。")
+    if book[DETAIL][f"A{start}"].value != "{{DATA_START}}" or book[DETAIL][f"A{initial_total}"].value != "{{TOTAL}}":
+        raise AuditError("模板须保留明细起始和合计锚点。")
+    if book[SUMMARY][summary.data.coord].data_type == "f":
+        raise AuditError("审定表一级科目输入格须保留为文本。")
+    reject_merged_writes(book[SUMMARY], summary.data)
+    for address in (f"A{start}:F{start}", f"A{initial_total}", f"C{initial_total}:F{initial_total}"):
+        reject_merged_writes(book[DETAIL], CellRange(address))
+    detail_total = start + max(1, len(coverage.detail_rows))
+    if detail_total > detail.data.max_row:
+        raise AuditError("应收明细超出底稿蓝图行数上限。")
+    for spec, names, records in tables(blueprint, data):
+        if (spec.data.min_row != 2 or spec.data.min_col != 1 or spec.data.max_col != len(names)
+                or spec.headers != ((CellRange(f"A1:{get_column_letter(len(names))}1"), names),)):
+            raise AuditError("底层模板表的标准字段位置与底稿蓝图不兼容。")
+        sheet = book[spec.name]
+        if any(cell.value is not None for row in sheet.iter_rows(min_row=2) for cell in row):
+            raise AuditError("底层模板表须只有标准字段表头和空白数据区。")
+        if len(records) + spec.data.min_row - 1 > spec.data.max_row:
+            raise AuditError("标准数据超出底稿蓝图行数上限。")
+        reject_merged_writes(sheet, spec.data)
+    frozen = blueprint.frozen_formulas(book)
+    if not {(SUMMARY, f"B{row}") for row in range(summary_start, summary_start + len(SUMMARY_LABELS))} <= frozen.keys():
+        raise AuditError("底稿蓝图须保护全部审定表公式。")
+    return Layout(start, detail_total, summary_start, len(coverage.detail_rows)), frozen
 
 
-def write_data(sheet, names, rows):
-    if len(rows) + 1 > EXCEL_ROWS:
-        raise AuditError("标准数据超出 Excel 行数上限。")
-    if tuple(cell.value for cell in sheet[1]) != names or sheet.max_row != 1:
-        raise AuditError("底层模板表须只有标准字段表头。")
-    amounts = {*TB_AMOUNT_FIELDS, "debit", "credit"}
-    for index, row in enumerate(rows, start=2):
-        values = astuple(row)
-        if sheet.title == TB_SHEET:
-            # Summary SUMIFS matches this text key in hidden column L, level 1 in C,
-            # and empty auxiliary detail in K. The prefix keeps 001 and 1 distinct.
-            # ACCOUNT_CODE excludes the Excel wildcard characters *, ? and ~.
-            values += (f"{ACCOUNT_KEY_PREFIX}{row.account_code}",)
+def detail_values(data, coverage, layout):
+    for row, source in enumerate(coverage.detail_rows, layout.detail_start):
+        record = data.tb[source - 2]
+        yield (record.account_code, record.aux_name or record.account_name,
+               f"=ROUND(Raw_TB!E{source}-Raw_TB!F{source},2)", f"=Raw_TB!G{source}", f"=Raw_TB!H{source}",
+               f"=ROUND(C{row}+D{row}-E{row},2)")
+
+
+def total_formulas(layout):
+    return tuple(f"=ROUND(SUM({col}{layout.detail_start}:{col}{layout.detail_total - 1}),2)" for col in "CDEF")
+
+
+def openpyxl_table(sheet, spec, names, records):
+    for index, values in enumerate(table_values(spec.name, records), spec.data.min_row):
         for column, (field, value) in enumerate(zip(names, values, strict=True), start=1):
             cell = sheet.cell(index, column)
             literal(cell, value)
-            if field in amounts:
+            if field in AMOUNT_FIELDS:
                 cell.number_format = AMOUNT_FORMAT
             elif isinstance(value, str):
                 cell.number_format = "@"
-    sheet.auto_filter.ref = f"A1:{get_column_letter(len(names))}{len(rows) + 1}"
+    sheet.auto_filter.ref = f"A1:{get_column_letter(spec.data.max_col)}{len(records) + spec.data.min_row - 1}"
 
 
-def build(template, data, coverage, ar_account):
+def build(template, data, coverage, ar_account, *, blueprint=None):
+    """Build a workpaper with openpyxl, leaving the report sheets to the caller."""
+    if blueprint is None:
+        blueprint = load_blueprint()
     check_template(template)
     book = load_workbook(template, keep_links=False)
-    write_data(book[TB_SHEET], RAW_TB_FIELDS, data.tb)
-    write_data(book[GL_SHEET], GL_FIELDS, data.gl)
-    start = anchor_row(book, DETAIL_FIRST, DETAIL, 1)
-    total = anchor_row(book, DETAIL_TOTAL, DETAIL, 1)
-    summary_start = anchor_row(book, SUMMARY_FIRST, SUMMARY, 2)
+    try:
+        layout, frozen = prepare_layout(book, blueprint, data, coverage)
+        for spec, names, records in tables(blueprint, data):
+            openpyxl_table(book[spec.name], spec, names, records)
+        fill_openpyxl_detail(book, blueprint, data, coverage, ar_account, layout)
+        validate_written_book(book, blueprint, layout, frozen, source="template")
+    except BaseException:
+        book.close()
+        raise
+    return book, layout
+
+
+def fill_openpyxl_detail(book, blueprint, data, coverage, ar_account, layout):
+    start, total = layout.detail_start, layout.detail_total
     detail = book[DETAIL]
-    if total != start + 1 or detail[f"A{start}"].value != "{{DATA_START}}" or detail[f"A{total}"].value != "{{TOTAL}}":
-        raise AuditError("模板须保留明细起始和合计锚点。")
-    if len(coverage.detail_rows) + start > EXCEL_ROWS:
-        raise AuditError("应收明细超出 Excel 行数上限。")
-    scope_cell = book[SUMMARY]["B3"]
-    if scope_cell.data_type == "f":
-        raise AuditError("审定表 B3 是一级科目输入格，须保留为文本。")
-    literal(scope_cell, ar_account)
-    added = max(0, len(coverage.detail_rows) - 1)
+    literal(book[SUMMARY][blueprint.sheet(SUMMARY).data.coord], ar_account)
+    added = total - start - 1
     if added:
-        total_height = detail.row_dimensions[total].height
-        detail.insert_rows(total, added)
-        total += added
+        initial_total = start + 1
+        if (any(merged.max_row >= initial_total for merged in detail.merged_cells.ranges)
+                or any(region.max_row >= start for rule in detail.conditional_formatting for region in rule.sqref.ranges)):
+            raise AuditError("此模板的明细扩行涉及合并或条件格式。请使用 --engine xlwings。")
+        total_height = detail.row_dimensions[initial_total].height
+        detail.insert_rows(initial_total, added)
         detail.row_dimensions[total].height = total_height
-    book.defined_names[DETAIL_TOTAL].attr_text = f"{quote_sheetname(DETAIL)}!$A${total}"
+    book.defined_names[DETAIL_TOTAL].attr_text = f"{quote_sheetname(detail.title)}!$A${total}"
     model_height = detail.row_dimensions[start].height
-    for index, source in enumerate(coverage.detail_rows, start=start):
-        record = data.tb[source - 2]
+    for index, values in enumerate(detail_values(data, coverage, layout), start=start):
         detail.row_dimensions[index].height = model_height
-        for column in range(1, len(DETAIL_HEADERS) + 1):
-            detail.cell(index, column)._style = copy(detail.cell(start, column)._style)
-        literal(detail.cell(index, 1), record.account_code)
-        literal(detail.cell(index, 2), record.aux_name or record.account_name)
-        detail[f"C{index}"] = f"=ROUND(Raw_TB!E{source}-Raw_TB!F{source},2)"
-        detail[f"D{index}"] = f"=Raw_TB!G{source}"
-        detail[f"E{index}"] = f"=Raw_TB!H{source}"
-        detail[f"F{index}"] = f"=ROUND(C{index}+D{index}-E{index},2)"
-    if not coverage.detail_rows:
+        for column, value in enumerate(values, 1):
+            cell = detail.cell(index, column)
+            cell._style = copy(detail.cell(start, column)._style)
+            if column <= 2:
+                literal(cell, value)
+            else:
+                cell.value = value
+    if not layout.details:
         detail[f"A{start}"] = None
         for letter in "CDEF":
             detail[f"{letter}{start}"] = None
     detail[f"A{total}"] = "合计"
-    for letter in "CDEF":
-        detail[f"{letter}{total}"] = f"=ROUND(SUM({letter}{start}:{letter}{total - 1}),2)"
+    for letter, formula in zip("CDEF", total_formulas(layout), strict=True):
+        detail[f"{letter}{total}"] = formula
     book.calculation = CalcProperties(calcMode="auto", fullCalcOnLoad=True, forceFullCalc=True)
-    return book, Layout(start, total, summary_start, len(coverage.detail_rows))
+
+
+def validate_written_book(book, blueprint, layout, frozen, *, source=None):
+    blueprint.validate(book, source=source, moved_anchors={DETAIL_TOTAL: f"A{layout.detail_total}"})
+    if blueprint.frozen_formulas(book) != frozen:
+        raise AuditError("写入改变了底稿蓝图保护的公式。")
+
+
+def native_payload(path, blueprint, data, coverage, ar_account, layout, epoch):
+    def number(value):
+        if isinstance(value, Decimal):
+            return float(value)
+        if isinstance(value, date):
+            return to_excel(value, epoch)
+        raise TypeError
+
+    table_specs = tables(blueprint, data)
+    manifest = {
+        "scope": (SUMMARY, blueprint.sheet(SUMMARY).data.coord, excel_literal(ar_account)),
+        "tables": [
+            {"sheet": spec.name, "first": spec.data.min_row, "count": len(records),
+             "formats": [TABLE_FORMATS.get(name, "@") for name in names]}
+            for spec, names, records in table_specs
+        ],
+        "detail": {"sheet": DETAIL, "start": layout.detail_start, "total": layout.detail_total,
+                   "count": layout.details, "formulas": total_formulas(layout)},
+    }
+    with path.open("w", encoding="utf-8") as stream:
+        stream.write(json.dumps(manifest, ensure_ascii=False) + "\n")
+        for spec, _, records in table_specs:
+            for row in table_values(spec.name, records):
+                values = tuple(excel_literal(value) for value in row)
+                stream.write(json.dumps(values, ensure_ascii=False, default=number) + "\n")
+        for row in detail_values(data, coverage, layout):
+            values = (excel_literal(row[0]), excel_literal(row[1]), *row[2:])
+            stream.write(json.dumps(values, ensure_ascii=False) + "\n")
+
+
+class WorkbookWriter(ABC):
+    """Populate the staged workbook and expose a book for the existing report renderers."""
+
+    def __init__(self, blueprint, scratch, timeout):
+        self.blueprint = blueprint
+        self.scratch = scratch
+        self.timeout = timeout
+        self.stage = scratch / "workpaper.xlsx"
+        self.book = None
+
+    @abstractmethod
+    def populate(self, data, coverage, ar_account):
+        """Write the staged template and return its layout and formulas."""
+
+    @abstractmethod
+    def finish(self, calculation):
+        """Finish the report sheets and return the validated output path."""
+
+    def close(self):
+        if self.book is not None:
+            self.book.close()
+
+
+class OpenpyxlWriter(WorkbookWriter):
+    def populate(self, data, coverage, ar_account):
+        self.book, self.layout = build(self.blueprint.template, data, coverage, ar_account, blueprint=self.blueprint)
+        self.frozen = self.blueprint.frozen_formulas(self.book)
+        actual = formulas(self.book)
+        self.book.save(self.stage)
+        return self.layout, actual
+
+    def finish(self, calculation):
+        validate_written_book(self.book, self.blueprint, self.layout, self.frozen)
+        self.book.save(self.stage)
+        if not calculation.caches:
+            return self.stage
+        final = self.scratch / "cached.xlsx"
+        write_caches(self.stage, final, calculation.caches)
+        return final
+
+
+class XlwingsWriter(WorkbookWriter):
+    def inspect(self, path, *, source=None):
+        check_template(path)
+        with closing(load_workbook(path, read_only=True, keep_links=False)) as book:
+            validate_written_book(book, self.blueprint, self.layout, self.frozen, source=source)
+            return formulas(book)
+
+    def populate(self, data, coverage, ar_account):
+        require_excel_writer()
+        template = self.scratch / "template.xlsx"
+        copyfile(self.blueprint.template, template)
+        check_template(template)
+        with closing(load_workbook(template, keep_links=False)) as original:
+            self.layout, self.frozen = prepare_layout(original, self.blueprint, data, coverage)
+            epoch = original.epoch
+        payload = self.scratch / "write-data.jsonl"
+        native_payload(payload, self.blueprint, data, coverage, ar_account, self.layout, epoch)
+        try:
+            run_excel_writer("populate", template, payload, self.stage, self.timeout)
+        finally:
+            payload.unlink()
+        self.actual = self.inspect(self.stage, source="template")
+        rows = (values[2:] for values in detail_values(data, coverage, self.layout))
+        for index, values in enumerate(rows, self.layout.detail_start):
+            self.check_detail_formulas(index, values)
+        self.check_detail_formulas(self.layout.detail_total, total_formulas(self.layout))
+        self.book = Workbook()
+        self.book.remove(self.book.active)
+        return self.layout, self.actual
+
+    def check_detail_formulas(self, row, values):
+        if any(self.actual.get((DETAIL, f"{column}{row}")) != value for column, value in zip("CDEF", values, strict=True)):
+            raise AuditError("Excel 原生写入后的明细公式与底稿蓝图不一致。")
+
+    def finish(self, calculation):
+        self.blueprint.validate(self.book, source="report")
+        reports = self.scratch / "reports.xlsx"
+        self.book.save(reports)
+        final = self.scratch / "excel.xlsx"
+        sheet_order = tuple(spec.name for spec in self.blueprint.sheets)
+        run_excel_writer("attach_reports", self.stage, reports, final, self.timeout, sheet_order)
+        written = self.inspect(final)
+        if written.keys() != self.actual.keys() or any(
+            formula_signature(value) != formula_signature(self.actual[key]) for key, value in written.items()
+        ):
+            raise AuditError("整理报告工作表后，Excel 原生底稿的公式位置或内容发生变化。")
+        return final
+
+
+def workpaper_writer(engine, blueprint, scratch, timeout):
+    writer_type = {"openpyxl": OpenpyxlWriter, "xlwings": XlwingsWriter}[engine]
+    return closing(writer_type(blueprint, scratch, timeout))

@@ -13,16 +13,16 @@ from uuid import uuid4
 import warnings
 
 from adapters.base_adapter import BaseAdapter, source_totals
+from core.blueprint import load_blueprint
 from core.cas_checker import scan_routed, scan_tb, write_cas_sheet
 from core.cas_routing import confirmed_account_names
-from core.fill_workpaper import build, select_coverage
+from core.fill_workpaper import select_coverage, workpaper_writer
 from core.masker import main as probe_main, safe_path
-from core.recalc import formulas, recalculate, write_caches
+from core.recalc import Calculation, read_caches, recalculate, scan
 from core.reconcile import console_lines, run_gates, write_report
 from core.schema import AuditError, account_code, validate
 
 ROOT = Path(__file__).resolve().parent
-TEMPLATE = ROOT / "templates" / "ar_template.xlsx"
 
 
 class Parser(argparse.ArgumentParser):
@@ -43,8 +43,10 @@ def parse_args(argv):
     parser.add_argument("--tb", required=True, type=Path)
     parser.add_argument("--gl", required=True, type=Path)
     parser.add_argument("--ar-account", help="应收账款的一级科目编码，默认取 Adapter")
+    parser.add_argument("--engine", choices=("openpyxl", "xlwings"), default="openpyxl",
+                        help="底稿写入引擎，默认 openpyxl")
     parser.add_argument("--recalc", choices=("auto", "libreoffice", "xlwings"), default="auto")
-    parser.add_argument("--timeout", type=positive_integer, default=120, help="每个重算后端的超时秒数")
+    parser.add_argument("--timeout", type=positive_integer, default=120, help="每次 Excel 原生写入或重算的超时秒数")
     parser.add_argument("--out", help="data/output 下的 ASCII XLSX 文件名")
     parser.add_argument("--local-amounts", action="store_true", help="仅供本地数据持有人输出真实输入的金额证据")
     parser.add_argument("--cas-routed", action="store_true", help="启用按科目路由的 CAS 筛查")
@@ -87,7 +89,13 @@ def load_account_names(path):
     return confirmed_account_names(names)
 
 
+def native_calculation(path, actual):
+    caches = read_caches(path, actual)
+    return Calculation("xlwings", caches, scan(actual, caches))
+
+
 def generate(args):
+    blueprint = load_blueprint()
     account_names = load_account_names(args.account_names) if args.account_names is not None else None
     tb, tb_kind = safe_path(args.tb)
     gl, gl_kind = safe_path(args.gl)
@@ -118,14 +126,14 @@ def generate(args):
         if any(os.path.lexists(path) for path in (approved, review)):
             raise AuditError("同名底稿或待复核底稿已存在。")
         with TemporaryDirectory(prefix=".run-", dir=output) as temp:
-            scratch = Path(temp)
-            book, layout = build(TEMPLATE, data, coverage, ar_account)
-            try:
-                actual = formulas(book)
-                stage = scratch / "workpaper.xlsx"
-                book.save(stage)
-                calculation = recalculate(stage, actual, args.recalc, args.timeout)
+            with workpaper_writer(args.engine, blueprint, Path(temp), args.timeout) as writer:
+                layout, actual = writer.populate(data, coverage, ar_account)
+                if args.engine == "xlwings" and args.recalc in ("auto", "xlwings"):
+                    calculation = native_calculation(writer.stage, actual)
+                else:
+                    calculation = recalculate(writer.stage, actual, args.recalc, args.timeout)
                 gates, controls, balances = run_gates(data, source, coverage, layout, actual, calculation)
+                book = writer.book
                 write_report(book, gates, controls, balances, calculation)
                 if args.cas_routed:
                     account_codes = tuple(dict.fromkeys(row.account_code for row in data.tb))
@@ -138,13 +146,12 @@ def generate(args):
                     rules, findings = scan_tb(data.tb, ar_account, account_pairs=adapter.cas_allowance_pairs)
                     write_cas_sheet(book, rules, findings)
                 passed = all(gate.status == "PASS" for gate in gates)
-                book.save(stage)
-            finally:
-                book.close()
-            final = stage
-            if calculation.caches:
-                final = scratch / "cached.xlsx"
-                write_caches(stage, final, calculation.caches)
+                final = writer.finish(calculation)
+            if passed and args.engine == "xlwings":
+                saved_calculation = native_calculation(final, actual)
+                saved_gates, _, saved_balances = run_gates(data, source, coverage, layout, actual, saved_calculation)
+                if saved_balances != balances or any(gate.status != "PASS" for gate in saved_gates):
+                    raise AuditError("最终 Excel 工作簿的公式缓存与勾稽报告不一致。")
             destination = approved if passed else review
             if os.name == "nt":
                 final.rename(destination)

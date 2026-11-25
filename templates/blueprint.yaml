@@ -1,0 +1,49 @@
+schema_version: 1
+workpapers:
+  accounts_receivable:
+    template: ar_template.xlsx
+    sheets:
+      - name: 00_自动勾稽与校验报告
+        source: report
+        headers:
+          A6:E6: [门禁, 结果, 异常数, 告警数, 检查范围]
+          A12:E12: [TB 金额字段, 原始合计, 标准合计, 差额, 比较口径]
+          A20:E20: [审定表未审数, 明细表期末合计, Raw_TB 一级期末净额, 审定表－明细表, 明细表－Raw_TB]
+          A23:E23: [位置或科目, 门禁, 类别, 差异, 问题说明]
+        data: A2:E1048576
+      - name: 01_准则异常与调整建议
+        source: report
+        headers:
+          A5:K5: [异常类型, 位置, 科目 / 客商, 期末净额, 应收原值, 异常及复核要点, 准则依据, 建议类型, 借方, 贷方, 待确认金额]
+        data: A2:K1048576
+      - name: 应收账款审定表
+        source: template
+        headers:
+          A5:B5: [项目, 金额]
+        data: B3
+        anchors: {AR_SUMMARY_FIRST: B6}
+        protected_formulas: [B6:B11]
+      - name: 应收账款明细表
+        source: template
+        headers:
+          A5:F5: [科目编码, 客商 / 辅助核算, 期初净额, 本期借方, 本期贷方, 期末余额]
+        data: A6:F1048576
+        anchors: {AR_DETAIL_FIRST: A6, AR_DETAIL_TOTAL: A7}
+        # 明细和合计公式随扩展后的行号按固定列生成。
+        detail_formulas: C6:F7
+      - name: AJE
+        source: template
+        headers:
+          A5:C5: [调整项目, 调整金额, 说明]
+        # 人工填写区。生成程序只保留模板中的单元格。
+        data: A6:C10
+      - name: Raw_TB
+        source: template
+        headers:
+          A1:L1: [account_code, account_name, level, direction, open_debit, open_credit, period_debit, period_credit, close_debit, close_credit, aux_name, account_key]
+        data: A2:L1048576
+      - name: Standard_GL
+        source: template
+        headers:
+          A1:G1: [date, voucher_no, summary, account_code, debit, credit, aux_name]
+        data: A2:G1048576

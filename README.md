@@ -49,6 +49,9 @@ Windows 也可用 `.\.venv\Scripts\python.exe` 代替 `python`。仓库随附模
 - 探针支持 `.xlsx`、`.xlsm`、`.xltx`、`.xltm`、`.xls`、`.xlsb`、`.ods` 和 `.csv`。工作表号与表头行号从 1 开始。CSV 默认 UTF-8，其他编码或分隔符用 `--encoding`、`--delimiter`。探针只采样表头和随后最多十行。旧版或二进制格式使用文件中已保存的单元格值。
 - 探针原样公开通用表头和数据持有人批准的表头。其他表头返回 `null`。`--approved-headers` 接收 `data/raw/` 或 `data/mock/` 下经本地审核的 JSON 字符串数组，或列名到标准字段的映射。后者可为非标准摘要或客商列指定 `summary` 或 `aux_name`。摘要抹除，客商以本次画像内稳定的占位符替换，金额保持符号、括号、千分位习惯和小数位数。
 - `--ar-account` 指定应收一级科目编码，默认采用 Adapter 设置。`--recalc` 取 `auto`、`xlwings` 或 `libreoffice`。`--out` 接收 `data/output/` 下的 ASCII 文件名，省略时生成唯一名称。
+- `--engine` 选择写入引擎。默认 `openpyxl`，写入阶段在本地直接处理 XLSX。`xlwings` 需要 Windows 上的本机 Excel 和 xlwings，使用后台 Excel 实例插入明细行、保留模板结构和复制报告。Excel 不可用时提示原因并退出。选用 `xlwings` 写入时，`--recalc auto` 使用 Excel 保存的重算结果。
+- 明细扩行涉及合并区域或条件格式时，使用 `--engine xlwings` 让 Excel 原生调整模板范围。原生写入遇到会被 Excel 截断的长文本时会提示改用 `--engine openpyxl`。
+- `templates/blueprint.yaml` 锁定应收模板路径、工作表清单和顺序、固定表头、数据区域及保护公式。生成前验证模板，保存前验证两张报告和整本底稿。
 - 退出码 0 表示 `PASS`。退出码 1 表示勾稽或重算 `FAILED`，生成 `*.review.xlsx`。退出码 2 表示参数、输入、契约或执行异常。
 - 模拟数据的终端输出可用于验收。真实数据默认只输出门禁状态，详细金额留在本地报告。数据持有人可在本地添加 `--local-amounts` 查看完整终端证据。
 
