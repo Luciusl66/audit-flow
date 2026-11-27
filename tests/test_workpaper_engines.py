@@ -3,7 +3,11 @@ from dataclasses import replace
 from io import StringIO
 import os
 from pathlib import Path
+from shutil import copyfile
+import subprocess
+import sys
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -12,12 +16,15 @@ from openpyxl.formatting.rule import CellIsRule
 from openpyxl.styles import PatternFill
 
 from adapters.demo_kingdee import Adapter
-from core.blueprint import load_blueprint
-from core.cas_checker import CAS_SHEET
-from core.excel_writer import excel_literal
-from core.fill_workpaper import DETAIL, DETAIL_TOTAL, SUMMARY, build, prepare_layout, select_coverage
-from core.recalc import Calculation
-from core.schema import AuditError, GL_SHEET
+from core.accounts import Ledger
+from core.blueprint import load_blueprint, load_blueprints
+from core.cas_checker import CAS_SHEET, write_cas_sheet
+from core.excel_writer import EXCEL_UNAVAILABLE, ExcelWriter, excel_literal, require_excel_writer, run_excel_writer
+from core.fill_workpaper import DETAIL, DETAIL_TOTAL, SUMMARY, XlwingsWriter, build, prepare_layout, select_coverage
+from core.fillers import make_filler
+from core.recalc import Cache, Calculation, scan
+from core.reconcile import Gate, write_report
+from core.schema import AuditError, GL_SHEET, TB_AMOUNT_FIELDS, ZERO
 from run import ROOT, main
 
 OUTPUT = ROOT / "data" / "output"
@@ -92,6 +99,181 @@ class BlueprintTest(unittest.TestCase):
         self.assertEqual(stdout.getvalue().strip(), "FAILED")
         self.assertIn(diagnostic, stderr.getvalue())
         self.assertEqual(list(self.output.iterdir()), [])
+
+
+class NativeWorkerBoundaryTest(unittest.TestCase):
+    def test_non_windows_refuses_native_writer_before_dependency_discovery(self):
+        with (patch("core.excel_writer.os", SimpleNamespace(name="posix")),
+              patch("core.excel_writer.find_spec") as find_spec):
+            with self.assertRaisesRegex(AuditError, "xlwings 写入需要 Windows"):
+                require_excel_writer()
+        find_spec.assert_not_called()
+
+    def test_worker_commands_use_private_scratch_and_expected_sheet_order(self):
+        for operation, order in (("populate", ()), ("apply_plan", ()), ("attach_reports", ("报告", SUMMARY))):
+            with self.subTest(operation=operation), TemporaryDirectory(dir=OUTPUT) as directory:
+                scratch = Path(directory)
+                source, payload, target = (scratch / name for name in ("stage.xlsx", "payload", "final.xlsx"))
+
+                def fake_subprocess(*args, **kwargs):
+                    target.touch()
+                    return subprocess.CompletedProcess(args[0], 0)
+
+                with patch("core.excel_writer.subprocess.run", side_effect=fake_subprocess) as worker:
+                    run_excel_writer(operation, source, payload, target, 7, order)
+                env = {**os.environ, "TMP": directory, "TEMP": directory, "TMPDIR": directory}
+                worker.assert_called_once_with(
+                    [sys.executable, "-m", "core.excel_writer", operation, str(source), str(payload), str(target), *order],
+                    cwd=ROOT, env=env, timeout=7, stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+
+    def test_worker_errors_reject_output_and_sanitize_diagnostics(self):
+        for operation, stage in (("populate", "填充模板"), ("attach_reports", "插入报告")):
+            for result, target_exists, diagnostic in (
+                (EXCEL_UNAVAILABLE, False, "无法启动本机 Microsoft Excel"),
+                (27, True, f"{stage}失败"),
+                (0, False, f"{stage}失败"),
+                (subprocess.TimeoutExpired(["private-path"], 1, stderr="private-data"), False, f"{stage}超时"),
+                (OSError("private-path"), False, "无法启动本机 Excel 写入进程"),
+            ):
+                with self.subTest(operation=operation, diagnostic=diagnostic), TemporaryDirectory(dir=OUTPUT) as directory:
+                    scratch = Path(directory)
+                    target = scratch / "result.xlsx"
+                    if target_exists:
+                        target.touch()
+                    outcome = {"side_effect": result} if isinstance(result, Exception) else {
+                        "return_value": subprocess.CompletedProcess([], result)
+                    }
+                    with patch("core.excel_writer.subprocess.run", **outcome), self.assertRaises(AuditError) as caught:
+                        run_excel_writer(operation, scratch / "stage.xlsx", scratch / "payload", target, 1)
+                    self.assertIn(diagnostic, str(caught.exception))
+                    self.assertNotIn("private-", str(caught.exception))
+
+
+def attach_synthetic_reports(source, payload, target, sheet_order, edit=None):
+    with closing(load_workbook(source)) as book, closing(load_workbook(payload)) as reports:
+        for index, name in enumerate(sheet_order):
+            if name in reports:
+                report = book.create_sheet(name, index)
+                for row in reports[name].values:
+                    report.append(row)
+        if edit is not None:
+            edit(book)
+        book.save(target)
+
+
+class NativeWriterCoordinatorTest(unittest.TestCase):
+    def setUp(self):
+        self.blueprint = load_blueprint()
+        self.adapter = Adapter()
+        self.data = self.adapter.transform(TB, GL)
+        self.coverage = select_coverage(self.data, self.adapter.ar_account)
+        self.populate_edit = None
+        self.attach_edit = None
+
+    def fake_legacy_worker(self, operation, source, payload, target, timeout, sheet_order=()):
+        if operation == "populate":
+            book, _ = build(source, self.data, self.coverage, self.adapter.ar_account, blueprint=self.blueprint)
+            with closing(book):
+                if self.populate_edit is not None:
+                    self.populate_edit(book)
+                book.save(target)
+        else:
+            self.assertEqual(operation, "attach_reports")
+            attach_synthetic_reports(source, payload, target, sheet_order, self.attach_edit)
+
+    def test_native_population_rejects_a_changed_detail_formula(self):
+        self.populate_edit = lambda book: setattr(book[DETAIL]["F6"], "value", "=0")
+        with (TemporaryDirectory(dir=OUTPUT) as directory,
+              patch("core.fill_workpaper.require_excel_writer"),
+              patch("core.fill_workpaper.run_excel_writer", side_effect=self.fake_legacy_worker),
+              closing(XlwingsWriter(self.blueprint, Path(directory), 5)) as writer):
+            with self.assertRaisesRegex(AuditError, "明细公式与底稿蓝图不一致"):
+                writer.populate(self.data, self.coverage, self.adapter.ar_account)
+
+    def test_native_report_attachment_rejects_moved_or_changed_formulas(self):
+        for edit in (
+            lambda book: book[DETAIL].move_range("F6:F6", rows=10),
+            lambda book: setattr(book[DETAIL]["F6"], "value", "=C6"),
+        ):
+            self.attach_edit = edit
+            with (TemporaryDirectory(dir=OUTPUT) as directory,
+                  patch("core.fill_workpaper.require_excel_writer"),
+                  patch("core.fill_workpaper.run_excel_writer", side_effect=self.fake_legacy_worker),
+                  closing(XlwingsWriter(self.blueprint, Path(directory), 5)) as writer):
+                writer.populate(self.data, self.coverage, self.adapter.ar_account)
+                calculation = Calculation("xlwings", {}, ())
+                controls = dict.fromkeys(TB_AMOUNT_FIELDS, (ZERO, ZERO, ZERO))
+                write_report(writer.book, tuple(Gate("校验", "") for _ in range(4)), controls, (None, None, None),
+                             calculation)
+                write_cas_sheet(writer.book, {}, ())
+                with self.assertRaisesRegex(AuditError, "公式位置或内容发生变化"):
+                    writer.finish(calculation)
+
+    def test_legacy_refuses_to_publish_when_final_cache_no_longer_reconciles(self):
+        def fake_caches(path, actual):
+            # These controls come from the synthetic fixture and do not evaluate Excel formulas.
+            caches = {key: Cache("n", "0") for key in actual}
+            caches[SUMMARY, "B9"] = Cache("n", "1950" if path.name == "workpaper.xlsx" else "1950.01")
+            caches.update({(DETAIL, f"F{row}"): Cache("n", value)
+                           for row, value in enumerate(("975", "675", "300", "1950"), 6)})
+            return Calculation("xlwings", caches, scan(actual, caches))
+
+        with (TemporaryDirectory(dir=OUTPUT) as directory, patch("run.store", return_value=Path(directory)),
+              patch("core.fill_workpaper.require_excel_writer"),
+              patch("core.fill_workpaper.run_excel_writer", side_effect=self.fake_legacy_worker) as worker,
+              patch("run.native_calculation", side_effect=fake_caches) as calculation,
+              redirect_stdout(StringIO()) as stdout, redirect_stderr(StringIO()) as stderr):
+            self.assertEqual(main([*ARGS, "--engine", "xlwings"]), 2)
+            self.assertEqual(list(Path(directory).iterdir()), [])
+        self.assertEqual([call.args[0] for call in worker.call_args_list], ["populate", "attach_reports"])
+        self.assertEqual([call.args[0].name for call in calculation.call_args_list], ["workpaper.xlsx", "excel.xlsx"])
+        self.assertEqual(stdout.getvalue().strip(), "FAILED")
+        self.assertIn("最终 Excel 工作簿的公式缓存与勾稽报告不一致", stderr.getvalue())
+
+    def test_batch_refuses_to_publish_when_final_native_formula_cache_is_missing(self):
+        blueprint = load_blueprints()["1122"]
+        tb, gl = MOCK / "mock_tb.xlsx", MOCK / "mock_gl.csv"
+        ledger = Ledger(self.adapter.transform(tb, gl))
+        with TemporaryDirectory(dir=OUTPUT) as directory:
+            output = Path(directory)
+            with TemporaryDirectory(dir=OUTPUT) as fake_directory, ExcelWriter(
+                "openpyxl", blueprint, Path(fake_directory), 5,
+            ) as local_writer:
+                layout = make_filler(local_writer, ledger, ("1122",)).populate()
+                local_writer.apply()
+                caches = {key: Cache("n", "0") for key in local_writer.actual}
+                for check in layout.checks:
+                    value = check.expected
+                    caches[check.position] = Cache("str" if isinstance(value, str) else "n", str(value))
+
+                def fake_batch_worker(operation, source, payload, target, timeout, sheet_order=()):
+                    if operation == "apply_plan":
+                        copyfile(local_writer.stage, target)
+                    else:
+                        self.assertEqual(operation, "attach_reports")
+                        attach_synthetic_reports(source, payload, target, sheet_order)
+
+                def fake_caches(path, actual):
+                    values = caches.copy()
+                    if path.name == "excel.xlsx":
+                        values.pop(layout.checks[0].position)
+                    return Calculation("xlwings", values, scan(actual, values))
+
+                args = ["--adapter", "demo_kingdee", "--tb", str(tb), "--gl", str(gl), "--subjects", "1122",
+                        "--engine", "xlwings"]
+                with (patch("run.store", return_value=output), patch("core.excel_writer.require_excel_writer"),
+                      patch("core.excel_writer.run_excel_writer", side_effect=fake_batch_worker),
+                      patch("run.native_calculation", side_effect=fake_caches) as calculation,
+                      patch("run.build_master") as master,
+                      redirect_stdout(StringIO()) as stdout, redirect_stderr(StringIO()) as stderr):
+                    self.assertEqual(main(args), 2)
+                    self.assertEqual(list(output.iterdir()), [])
+        master.assert_not_called()
+        self.assertEqual([call.args[0].name for call in calculation.call_args_list], ["workpaper.xlsx", "excel.xlsx"])
+        self.assertEqual(stdout.getvalue().strip(), "FAILED")
+        self.assertIn("最终 Excel 工作簿的公式缓存与勾稽报告不一致", stderr.getvalue())
 
 
 @unittest.skipUnless(os.environ.get("AUDIT_FLOW_TEST_NATIVE_EXCEL") == "1", "requires local Windows Excel")

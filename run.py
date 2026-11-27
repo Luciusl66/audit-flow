@@ -31,6 +31,7 @@ from core.reconcile import (
     BATCH_COMPARISON_HEADERS, cached_money, check_batch_coverage, check_conservation, check_excel, check_opening, check_subject,
     combine_gates, console_lines, gates_passed, money, opening_differences, run_gates, write_report,
 )
+from core.run_lock import run_lock
 from core.schema import AuditError, GL_SHEET, TB_SHEET, account_code, validate
 
 ROOT = Path(__file__).resolve().parent
@@ -168,11 +169,7 @@ def generate_legacy(args, data, source, ar_account, account_names, adapter, show
     approved = output / name
     review = approved.with_suffix(".review.xlsx")
     claim = output / f".claim-{approved.stem.lower()}"
-    try:
-        claim.mkdir()
-    except FileExistsError:
-        raise AuditError("同名底稿正在生成。") from None
-    try:
+    with run_lock(claim, "同名底稿正在生成。"):
         if any(os.path.lexists(path) for path in (approved, review)):
             raise AuditError("同名底稿或待复核底稿已存在。")
         with TemporaryDirectory(prefix=".run-", dir=output) as temp:
@@ -199,8 +196,6 @@ def generate_legacy(args, data, source, ar_account, account_names, adapter, show
                 final.rename(destination)
             else:
                 os.link(final, destination)
-    finally:
-        claim.rmdir()
     for line in console_lines(gates, controls, balances, show_amounts=show_amounts):
         print(line)
     print(f"data/output/{destination.name}")
@@ -236,12 +231,24 @@ def select_subjects(value, blueprints, ledger):
     return selected, owners, skipped
 
 
+def finding_row(position):
+    """Return the sheet and zero-based data index for a recognized CAS position."""
+    if not isinstance(position, str):
+        return None
+    match = re.fullmatch(rf"({TB_SHEET}|{GL_SHEET})!([1-9][0-9]{{0,6}})(?:（组内 [1-9][0-9]* 行）)?", position)
+    if match is None or int(match[2]) < 2:
+        return None
+    return match[1], int(match[2]) - 2
+
+
 def scoped_findings(data, ledger, codes, findings):
+    sources = {TB_SHEET: data.tb, GL_SHEET: data.gl}
     for finding in findings:
-        row = re.match(rf"^({TB_SHEET}|{GL_SHEET})!([0-9]+)", finding.position)
-        if row:
-            records = data.tb if row[1] == TB_SHEET else data.gl
-            if ledger.owner(records[int(row[2]) - 2].account_code) not in codes:
+        location = finding_row(finding.position)
+        if location is not None:
+            sheet, index = location
+            records = sources[sheet]
+            if index < len(records) and ledger.owner(records[index].account_code) not in codes:
                 continue
         yield finding
 
@@ -290,11 +297,7 @@ def generate_batch(args, data, source, ar_account, account_names, adapter, show_
                                   for code in codes for line, _ in ledger.members[code])
     route_codes = tuple(dict.fromkeys((*owners, *(row.account_code for row in data.tb
                                                 if ledger.owner(row.account_code) in owners))))
-    try:
-        claim.mkdir()
-    except FileExistsError:
-        raise AuditError("另一个批量底稿任务正在生成。") from None
-    try:
+    with run_lock(claim, "另一个批量底稿任务正在生成。"):
         rules, findings, deferred = cas_scan(args, data, route_codes, ar_account, account_names, adapter, counterparty_rows)
         results, staged, group_findings = [], [], []
         with TemporaryDirectory(prefix=".run-", dir=output) as directory:
@@ -348,9 +351,6 @@ def generate_batch(args, data, source, ar_account, account_names, adapter, show_
             staged.append((cached_master, MASTER_FILE))
             passed = gates_passed(gates)
             destinations = publish_batch(output, staged, passed, scratch)
-    finally:
-        claim.rmdir()
-
     lines = console_lines(gates, controls, None, show_amounts=show_amounts)
     for line in lines[:-1]:
         print(line)

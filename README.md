@@ -33,7 +33,7 @@ audit-flow 在本地将科目余额表（TB）、序时账（GL）和可选的�
 
 ## 快速运行
 
-需要 Python 3.10+。Windows 可用 Microsoft Excel 和 xlwings，也可安装 LibreOffice 并使 `soffice` 可用。
+需要 Python 3.11+。当前 `python-calamine` 的最低版本要求 Python 3.11。Windows 可用 Microsoft Excel 和 xlwings，也可安装 LibreOffice 并使 `soffice` 可用。
 
 ~~~sh
 python -m venv .venv
@@ -55,8 +55,24 @@ Windows 也可用 `.\.venv\Scripts\python.exe` 代替 `python`。仓库随附模
 - 明细扩行涉及合并区域或条件格式时，使用 `--engine xlwings` 让 Excel 原生调整模板范围。原生写入遇到会被 Excel 截断的长文本时会提示改用 `--engine openpyxl`。
 - `templates/blueprint.yaml` 锁定五类原型的模板、固定表头、写入锚点及保护公式。绑定精确总账编码、带 `*` 的总账编码前缀或列表，并按需在 `rules/cas_router.yaml` 配置规则。
 - 批量 Master TB 覆盖完整账套，各总账科目只采用一个层级。建议调整用于 Master TB 期末模拟，金额留待复核后另行录入。任何门禁失败时整批输出 `*.review.xlsx`。同名批次保存在新的 `data/output/run_<id>/` 目录。
+- 同名底稿和批量任务分别持有 `.claim-*` 运行锁。支持系统文件锁的本地目录可自动恢复元数据完整且已无人持有的本机锁。遇到旧版空锁、元数据损坏或状态不明时，错误会显示锁目录。请在本机确认该输出目录的相关任务均已停止，再手动移走提示中的锁目录并重试。
 - 退出码 0 表示 `PASS`。退出码 1 表示勾稽或重算 `FAILED`，生成 `*.review.xlsx`。退出码 2 表示参数、输入、契约或执行异常。
 - 模拟数据的终端输出可用于验收。真实数据默认只输出门禁状态，详细金额留在本地报告。数据持有人可在本地添加 `--local-amounts` 查看完整终端证据。
+
+### 依赖锁
+
+普通安装使用 `python -m pip install -r requirements.txt`，按直接依赖的兼容范围解析。复现固定版本时，在干净的虚拟环境中按锁文件安装并校验哈希。锁文件按 Python 3.11+ 与平台选择依赖，`xlwings` 及 `pywin32` 仅在 Windows 安装。
+
+~~~sh
+python -m pip install --require-hashes -r requirements-lock.txt
+~~~
+
+修改直接依赖或需要刷新锁定版本时，在独立的工具环境中运行以下命令。
+
+~~~sh
+python -m pip install uv==0.13.10
+uv --no-config --no-python-downloads pip compile --universal --python-version 3.11 --generate-hashes --upgrade --output-file requirements-lock.txt requirements.txt
+~~~
 
 ## 数据口径和 Excel 模板
 
@@ -78,7 +94,7 @@ Windows 也可用 `.\.venv\Scripts\python.exe` 代替 `python`。仓库随附模
 | 4. 公式健康度 | 检查预期公式存在、公式缓存存在且无 Excel 错误 |
 | 5. 期初滚存勾稽 | 按科目编码和辅助核算比较本期未审期初与上年审定期末，差额必须为 0.00 |
 
-新增客户见 `SKILL.md`。运行 `python -m unittest discover -s tests` 可验证脱敏、严格差额、未映射兜底、模板公式保留和缓存检查。
+新增客户见 `SKILL.md`。运行 `python -m unittest discover -s tests` 可验证脱敏、严格差额、未映射兜底、模板公式保留、缓存检查和运行锁恢复。无 Excel 环境照常运行这条命令。测试替身覆盖子进程调用和写入校验，实际 Excel 重算由原生集成测试验证。在安装本机 Microsoft Excel 的 Windows 环境中，设置 `AUDIT_FLOW_TEST_NATIVE_EXCEL=1` 可运行这组集成测试。
 
 ## CAS 准则异常筛查
 

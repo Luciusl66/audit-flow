@@ -24,6 +24,8 @@ description: 从脱敏画像编写客户 Adapter，在本地批量生成实质�
 - 使用 `--subjects 1122`、`--subjects 1002,1122,6001` 或 `--subjects ALL` 调度科目。批量运行生成科目底稿和 `data/output/00_Master_TB.xlsx`。Master TB 以总账粒度覆盖完整账套，标明本次调度范围。
 - 提供 `--prior-tb <path>` 时，以同一账套和币种的上年审定期末核对本期未审期初，保留科目编码及辅助核算。首次审计省略该参数时，报告显示 `SKIPPED (未提供上年审定数)`。审定表的上年数从 `Raw_Prior_TB` 取数，自动计算同比。
 - `--engine` 选择写入引擎，默认 `openpyxl`。明细扩行涉及合并单元格或条件格式时，使用 `--engine xlwings`，需要 Windows、本机 Excel 和 xlwings。`--recalc` 单独控制公式重算，默认 `auto`。使用 `--engine xlwings --recalc auto` 时，采用 Excel 保存的重算结果。
+- 遇到运行锁状态不明时，按报错路径在本机核对 `.claim-*`。确认该输出目录的相关任务均已停止后，再手动移走锁目录并重试。
+- 常规安装和锁文件复现见 `README.md` 的「依赖锁」。`python -m unittest discover -s tests` 可在无 Excel 环境执行。替身测试覆盖调用及校验行为，实际重算以可用后端的合成用例结果为准。
 - 常规底稿使用默认 CAS 通用筛查。明确要求按科目筛查时，给生成命令加 `--cas-routed`，按下文确认所需参数。
 
 ## 标准操作流程

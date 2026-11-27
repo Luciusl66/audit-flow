@@ -1,5 +1,6 @@
 from pathlib import Path
-from subprocess import TimeoutExpired
+from subprocess import DEVNULL, CalledProcessError, TimeoutExpired
+import sys
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
@@ -17,6 +18,27 @@ CACHES = {("SUMMARY", "B9"): Cache("n", "2")}
 
 
 class RecalculationDiagnosticsTest(unittest.TestCase):
+    def test_xlwings_recalculation_worker_failure_uses_private_directory(self):
+        failure = CalledProcessError(19, ["worker"], stderr="private-data")
+        with TemporaryDirectory(dir=ROOT / "data" / "output") as temporary:
+            source = Path(temporary) / "stage.xlsx"
+            scratch = source.parent / "xlwings"
+            with (
+                patch("core.recalc.os", SimpleNamespace(environ={"EXISTING": "one"}, name="nt")),
+                patch("core.recalc.find_spec", return_value=object()),
+                patch("core.recalc.subprocess.run", side_effect=failure) as worker,
+            ):
+                calculation = recalculate(source, EXPECTED, "xlwings", 9)
+            worker.assert_called_once_with(
+                [sys.executable, str(ROOT / "core" / "recalc.py"), "--excel-worker", str(source),
+                 str(scratch / source.name)],
+                cwd=scratch, env={"EXISTING": "one", **dict.fromkeys(("TMP", "TEMP", "TMPDIR"), str(scratch))},
+                stdin=DEVNULL, stdout=DEVNULL, stderr=DEVNULL, check=True, timeout=9,
+            )
+        self.assertEqual(calculation.note, "xlwings: 引擎执行失败")
+        self.assertEqual(calculation.backend, "unavailable")
+        self.assertEqual(calculation.caches, {})
+
     def test_fallback_preserves_sanitized_failure_in_report(self):
         failure = TimeoutExpired(["xlwings", "private-path.xlsx"], 1, stderr="private-amount")
         with TemporaryDirectory(dir=ROOT / "data" / "output") as temporary:
