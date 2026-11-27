@@ -1,6 +1,6 @@
 """Read-only audit gates using exact Decimal cents and Office formula caches."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal, InvalidOperation
 
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -59,8 +59,9 @@ class OpeningDifference:
     name: str
     auxiliary: str | None
     position: str
-    opening: Decimal
-    prior: Decimal
+    opening: Decimal | None
+    prior: Decimal | None
+    review_only_reason: str = ""
 
     @property
     def label(self):
@@ -68,7 +69,9 @@ class OpeningDifference:
 
     @property
     def difference(self):
-        return self.opening - self.prior
+        if self.opening is not None and self.prior is not None:
+            return self.opening - self.prior
+        return None
 
 
 def opening_differences(ledger):
@@ -83,14 +86,34 @@ def opening_differences(ledger):
         prior = ledger.prior.exact.get(key)
         current_lines = current or (ledger.current.controls.get(code, ()) if auxiliary is None else ())
         prior_lines = prior or (ledger.prior.controls.get(code, ()) if auxiliary is None else ())
-        opening = net_sides(data.tb, current_lines, "open_debit", "open_credit")
-        previous = net_sides(data.prior_tb, prior_lines, *PRIOR_AMOUNT_FIELDS)
-        if opening != previous:
-            if current:
-                source, name = f"Raw_TB!{current[0]}", data.tb[current[0] - 2].account_name
-            else:
-                source, name = f"{PRIOR_TB_SHEET}!{prior[0]}", data.prior_tb[prior[0] - 2].account_name
-            result.append(OpeningDifference(code, name, auxiliary, source, opening, previous))
+        opening = net_sides(data.tb, current_lines, "open_debit", "open_credit") if current_lines else None
+        previous = net_sides(data.prior_tb, prior_lines, *PRIOR_AMOUNT_FIELDS) if prior_lines else None
+        if opening == previous or (opening in (None, ZERO) and previous in (None, ZERO)):
+            continue
+        if current:
+            source, name = f"Raw_TB!{current[0]}", data.tb[current[0] - 2].account_name
+        else:
+            source, name = f"{PRIOR_TB_SHEET}!{prior[0]}", data.prior_tb[prior[0] - 2].account_name
+        result.append(OpeningDifference(code, name, auxiliary, source, opening, previous))
+
+    # Keep diagnostics at every grain. Only the lowest reported grain can carry a draft amount.
+    aggregate_codes = {item.code for item in result if item.auxiliary is not None}
+    for parents in (ledger.parents, ledger.prior_parents):
+        for item in result:
+            parent = parents.get(item.code)
+            while parent is not None:
+                aggregate_codes.add(parent)
+                parent = parents.get(parent)
+    ambiguous_roots = {ledger.owner(code) for index in (ledger.current, ledger.prior)
+                       for code, _ in index.ambiguous_auxiliary}
+    for index, item in enumerate(result):
+        if ledger.owner(item.code) in ambiguous_roots:
+            reason = "本科目所属汇总范围的辅助核算粒度待确认。"
+        elif item.auxiliary is None and item.code in aggregate_codes:
+            reason = "相关下级或辅助差异已列示，请在底层核查后再确认汇总调整。"
+        else:
+            continue
+        result[index] = replace(item, review_only_reason=reason)
     return tuple(result)
 
 
@@ -99,6 +122,10 @@ def check_opening(data, differences):
         return Gate("5. 期初滚存勾稽", "未提供上年审定数", skipped="未提供上年审定数")
     gate = Gate("5. 期初滚存勾稽", "科目及辅助核算的本期未审期初减上年审定期末。借正贷负。容差 0.00。", limit=None)
     for item in differences:
+        if item.difference is None:
+            missing = "本期未审期初" if item.opening is None else "上年审定期末"
+            gate.add(item.label, f"缺少可比的{missing}余额。请核对相同科目和辅助核算范围。")
+            continue
         gate.add(item.label, f"本期未审期初 {money(item.opening)} − 上年审定期末 {money(item.prior)}。"
                  "核查是否存在上期审计调整未入账。", item.difference)
     return gate
@@ -151,6 +178,8 @@ def cached_money(cache):
 
 def check_cross(data, coverage, layout, calculation):
     gate = Gate("3. 跨表勾稽", "审定表未审数、明细期末合计及 Raw_TB 一级科目期末净额。")
+    for position, issue, difference in coverage.grain_issues:
+        gate.add(position, issue, difference)
     root_amount = None
     if len(coverage.root_rows) != 1:
         gate.add("Raw_TB", "目标一级科目须有且仅有一条无辅助核算的余额行")

@@ -30,6 +30,7 @@ class MasterLayout:
     checks: tuple[BalanceCheck, ...]
     differences: tuple[BalanceCheck, ...]
     duplicate_roots: tuple[str, ...]
+    issues: tuple
 
     def required_formulas(self):
         return self.formulas
@@ -130,6 +131,7 @@ def build_master(book: Workbook, ledger, owners, findings, names):
     if total + 2 > 1_048_576:
         raise AuditError("Master TB 超出 Excel 行数上限。")
     registered, checks = set(), []
+    issues = list(ledger.grain_issues())
     totals = dict.fromkeys("DEFGHIJKLMNO", ZERO)
     debits, credits, last = write_proposals(book, ledger, findings, names, total - 1, registered, checks)
     for row, code in enumerate(codes, 6):
@@ -151,6 +153,10 @@ def build_master(book: Workbook, ledger, owners, findings, names):
         current = ledger.current.roots.get(code, ())
         prior = amount_sides(data.prior_tb, old, *PRIOR_AMOUNT_FIELDS) if old else ("", "")
         tb = tuple(sum((getattr(data.tb[line - 2], field) for line in current), ZERO) for field in TB_AMOUNT_FIELDS)
+        opening_dr, opening_cr, period_dr, period_cr, closing_dr, closing_cr = tb
+        rollforward = closing_dr - closing_cr - (opening_dr - opening_cr + period_dr - period_cr)
+        if rollforward != ZERO:
+            issues.append((f"{MASTER_SHEET}!J{row} / {code}", "期末净额与期初净额加本期净发生额不一致", rollforward))
         net = tb[4] - tb[5] + debits[code] - credits[code]
         expected = (*prior, *tb, debits[code], credits[code], max(net, ZERO), max(-net, ZERO))
         for col, amount in zip("DEFGHIJKLMNO", expected, strict=True):
@@ -196,12 +202,14 @@ def build_master(book: Workbook, ledger, owners, findings, names):
         apply_openpyxl(book, {"type": "table", "sheet": name, "first": 2, "count": count,
                               "formats": [TABLE_FORMATS.get(field, "@") for field in fields]}, rows)
     duplicates = tuple(code for code in ledger.current.roots if len(ledger.current.exact.get((code, None), ())) > 1)
-    return MasterLayout(frozenset(registered), tuple(checks), tuple(differences), duplicates)
+    return MasterLayout(frozenset(registered), tuple(checks), tuple(differences), duplicates, tuple(issues))
 
 
 def check_master(layout, calculation):
-    gate = Gate("3. Master TB 总试算平衡", "全账套按总账科目单一粒度核对各阶段借贷。容差 0.00。")
+    gate = Gate("3. Master TB 总试算平衡", "全账套核对总账科目汇总粒度、余额滚动及各阶段借贷。容差 0.00。")
     for code in layout.duplicate_roots:
         gate.add(f"{TB_SHEET} / {code}", "同一总账科目存在多条无辅助核算的汇总行")
+    for position, issue, difference in layout.issues:
+        gate.add(position, issue, difference)
     check_calculated(gate, calculation, (*layout.checks, *layout.differences))
     return gate

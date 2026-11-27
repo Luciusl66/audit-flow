@@ -1,8 +1,9 @@
 """Offline CAS screening. The scanner reads standardized TB rows and returns findings."""
 
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
+from itertools import chain
 from string import Template
 
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -42,6 +43,16 @@ class Finding:
     credit: str = ""
     draft_amount: Decimal | None = None
     gross: Decimal | None = None
+    scope_codes: tuple[str, ...] = field(default=(), kw_only=True, compare=False, repr=False)
+
+
+@dataclass(frozen=True)
+class Observation:
+    position: str
+    label: str
+    balance: Decimal | None
+    variables: dict[str, str]
+    scope_codes: tuple[str, ...] = ()
 
 
 def code_list(values):
@@ -126,6 +137,10 @@ def closing_findings(rows, rule):
                           "导出结转状态待确认。", "结转分录待确认", debit, credit)
 
 
+def allowance_accounts(group, gross_codes, gross_rows):
+    return tuple(sorted(set(gross_codes) | {record.account_code for _, record in chain(group, gross_rows)}))
+
+
 def check_allowance_scope(group, gross_rows, prefixes, rule, auxiliary=None):
     balance = sum((net(record) for _, record in group), ZERO)
     if balance >= ZERO:
@@ -135,15 +150,16 @@ def check_allowance_scope(group, gross_rows, prefixes, rule, auxiliary=None):
     label = f"{codes}（配对应收 {'、'.join(prefixes)}）"
     if auxiliary is not None:
         label += f" / {auxiliary}"
+    scope = allowance_accounts(group, prefixes, gross_rows)
     if not gross_rows:
-        yield Finding("AR_ALLOWANCE", position, label, balance, "未取得配对范围内的应收原值。")
+        yield Finding("AR_ALLOWANCE", position, label, balance, "未取得配对范围内的应收原值。", scope_codes=scope)
         return
     gross = sum((max(net(record), ZERO) for _, record in gross_rows), ZERO)
     if -balance > gross:
         excess = -balance - gross
         yield Finding("AR_ALLOWANCE", position, label, balance,
                       f"准备贷方净额超过配对范围内的应收借方原值 {excess:.2f}。原值按同范围明细筛查。",
-                      "AJE 待重算", rule.debit, rule.credit, gross=gross)
+                      "AJE 待重算", rule.debit, rule.credit, gross=gross, scope_codes=scope)
 
 
 def allowance_findings(rows, rule, pairs):
@@ -200,11 +216,13 @@ def voucher_differences(gl, tolerance):
     totals = {}
     for index, record in enumerate(gl, 2):
         key = (record.date, record.voucher_no)
-        first, total = totals.get(key, (index, ZERO))
-        totals[key] = (first, total + record.debit - record.credit)
-    for index, difference in totals.values():
+        first, total, codes = totals.get(key) or (index, ZERO, set())
+        codes.add(record.account_code)
+        totals[key] = (first, total + record.debit - record.credit, codes)
+    for index, difference, codes in totals.values():
         if abs(difference) > tolerance:
-            yield f"{GL_SHEET}!{index}", "凭证借贷平衡", None, {"difference": f"{difference:.2f}"}
+            yield Observation(f"{GL_SHEET}!{index}", "凭证借贷平衡", None,
+                              {"difference": f"{difference:.2f}"}, tuple(sorted(codes)))
 
 
 def post_close_balances(tb, selected_account, tolerance, *, root_only=False):
@@ -221,7 +239,7 @@ def post_close_balances(tb, selected_account, tolerance, *, root_only=False):
                              ("本年利润", record.account_name))
             variables = {"account_code": record.account_code, "balance": f"{balance:.2f}",
                          "debit_account": debit, "credit_account": credit, "amount": f"{abs(balance):.2f}"}
-            yield f"{TB_SHEET}!{index}", subject(record), balance, variables
+            yield Observation(f"{TB_SHEET}!{index}", subject(record), balance, variables)
 
 
 def direction_observations(tb, selected_account, condition, tolerance):
@@ -234,8 +252,8 @@ def direction_observations(tb, selected_account, condition, tolerance):
         matched = (direction == condition["trigger_direction"] if "trigger_direction" in condition
                    else direction != condition["expected_direction"])
         if matched:
-            yield f"{TB_SHEET}!{index}", subject(row), balance, {
-                "account_code": row.account_code, "balance": f"{balance:.2f}"}
+            yield Observation(f"{TB_SHEET}!{index}", subject(row), balance, {
+                "account_code": row.account_code, "balance": f"{balance:.2f}"})
 
 
 def summary_observations(gl, selected_account, keywords):
@@ -243,8 +261,8 @@ def summary_observations(gl, selected_account, keywords):
         if selected_account(row.account_code):
             keyword = next((word for word in keywords if word in row.summary), None)
             if keyword is not None:
-                yield f"{GL_SHEET}!{index}", row.account_code, None, {
-                    "account_code": row.account_code, "keyword": keyword}
+                yield Observation(f"{GL_SHEET}!{index}", row.account_code, None, {
+                    "account_code": row.account_code, "keyword": keyword})
 
 
 def contra_observations(tb, selected_account, gross_account, condition, tolerance, pairs):
@@ -276,8 +294,9 @@ def contra_observations(tb, selected_account, gross_account, condition, toleranc
         excess = provision - gross
         if excess > tolerance:
             index, row = group[0]
-            yield f"{TB_SHEET}!{index}（组内 {len(group)} 行）", subject(row), -provision, {
-                "balance": f"{-provision:.2f}", "gross": f"{gross:.2f}", "excess": f"{excess:.2f}"}
+            yield Observation(f"{TB_SHEET}!{index}（组内 {len(group)} 行）", subject(row), -provision, {
+                "balance": f"{-provision:.2f}", "gross": f"{gross:.2f}", "excess": f"{excess:.2f}"},
+                allowance_accounts(group, codes, original.items()))
 
 
 def routed_observations(data, rule, pairs, account_matches):
@@ -338,17 +357,20 @@ def scan_routed(data, account_codes, *, complete_vouchers=False, period_closed=F
                 if rule_id not in deferred:
                     deferred.append(rule_id)
                 continue
-            position, label, balance, variables = observation
+            position, label, balance = observation.position, observation.label, observation.balance
+            variables = observation.variables
             detail = Template(rule["message_template"]).substitute(variables)
             entry = rule["suggested_entry"]
             gross = Decimal(variables["gross"]) if "gross" in variables else None
             if entry is None:
-                findings.append(Finding(rule_id, position, label, balance, detail, gross=gross))
+                findings.append(Finding(rule_id, position, label, balance, detail, gross=gross,
+                                        scope_codes=observation.scope_codes))
                 continue
             debit, credit = (Template(entry[field]).substitute(variables) for field in ("debit", "credit"))
             amount = Decimal(Template(entry["amount"]).substitute(variables)) if entry["amount"] else None
             findings.append(Finding(rule_id, position, label, balance, detail,
-                                    f"{entry['type']} 待复核", debit, credit, amount, gross))
+                                    f"{entry['type']} 待复核", debit, credit, amount, gross,
+                                    scope_codes=observation.scope_codes))
     return RoutedScan(route, rules, tuple(findings), tuple(deferred))
 
 
@@ -386,12 +408,22 @@ def opening_suggestions(differences):
                 "核对上期已批准分录和本期入账记录。若确认漏记，按原分录核实对方科目后办理期初滚调。")
     findings = []
     for item in differences:
+        difference = item.difference
+        if difference is None:
+            missing = "本期未审期初" if item.opening is None else "上年审定期末"
+            detail = f"缺少可比的{missing}余额。请补齐明细或核对科目及辅助核算映射。"
+            findings.append(Finding(key, item.position, item.label, None, detail, "期初明细待补"))
+            continue
+        if item.review_only_reason:
+            detail = f"期初差异 {difference:.2f}。{item.review_only_reason}"
+            findings.append(Finding(key, item.position, item.label, None, detail, "期初滚存待核对"))
+            continue
         counterpart = "待核实对方科目"
-        debit, credit = (counterpart, item.label) if item.difference > ZERO else (item.label, counterpart)
-        detail = (f"期初差异 {item.difference:.2f}。核查是否属于上期审计调整未入账。"
+        debit, credit = (counterpart, item.label) if difference > ZERO else (item.label, counterpart)
+        detail = (f"期初差异 {difference:.2f}。核查是否属于上期审计调整未入账。"
                   "建议分录以本期未审期初调整到上年审定期末为方向。")
         findings.append(Finding(key, item.position, item.label, None, detail, "期初滚调待复核",
-                                debit, credit, abs(item.difference)))
+                                debit, credit, abs(difference)))
     return ({key: rule} if findings else {}), tuple(findings)
 
 

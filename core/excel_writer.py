@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 from importlib.util import find_spec
-from itertools import groupby, islice
+from itertools import chain, groupby, islice
 import json
 import os
 from pathlib import Path
@@ -101,6 +101,45 @@ def reject_merged_writes(sheet, area):
         raise AuditError(f"工作表 {sheet.title} 的蓝图写入区域包含合并单元格的非锚点。")
 
 
+def insertion_requires_native(sheet, first, insert_at, generated_range, existing_formulas, managed_names):
+    if (any(area.max_row >= insert_at for area in sheet.merged_cells.ranges)
+            or any(area.max_row >= first for rule in sheet.conditional_formatting for area in rule.sqref.ranges)
+            or any(area.max_row >= first for rule in sheet.data_validations.dataValidation for area in rule.sqref.ranges)
+            or sheet.tables):
+        return True
+
+    sheet_refs = tuple(f"{title.casefold()}!" for title in (sheet.title, quote_sheetname(sheet.title)))
+    definitions = chain((item for name, item in sheet.parent.defined_names.items() if name not in managed_names),
+                        sheet.defined_names.values())
+    for definition in definitions:
+        if not any(reference in definition.attr_text.casefold() for reference in sheet_refs):
+            continue
+        try:
+            if definition.type != "RANGE" or any(
+                    title == sheet.title and CellRange(address).max_row >= insert_at
+                    for title, address in definition.destinations):
+                return True
+        except (ValueError, TokenizerError):
+            return True
+
+    for (name, address), formula in existing_formulas.items():
+        local = name == sheet.title
+        if local and generated_range is not None and address in generated_range:
+            continue
+        if local and (coordinate_to_tuple(address)[0] >= insert_at or not isinstance(formula, str)):
+            return True
+        text = formula if isinstance(formula, str) else getattr(formula, "text", None)
+        if text and any(reference in text.casefold() for reference in sheet_refs):
+            return True
+        if local:
+            try:
+                if any(token.subtype == "RANGE" and "!" not in token.value for token in Tokenizer(text).items):
+                    return True
+            except TokenizerError:
+                return True
+    return False
+
+
 @dataclass(frozen=True)
 class Section:
     spec: SheetBlueprint
@@ -167,7 +206,8 @@ class ExcelWriter:
             raise AuditError(f"工作表 {spec.name} 的明细锚点或行数超出蓝图布局。")
         if total > initial_total:
             sheet = self.template[spec.name]
-            if self.engine == "openpyxl" and self.requires_native(sheet, first, initial_total):
+            if self.engine == "openpyxl" and insertion_requires_native(
+                    sheet, first, initial_total, spec.detail_formulas, self.existing, spec.anchors):
                 raise AuditError("模板扩行涉及合并、条件格式或已有引用。请使用 --engine xlwings。")
             added = total - initial_total
             self.shifts[spec.name] = (initial_total, added)
@@ -178,32 +218,6 @@ class ExcelWriter:
             self.operations.append(({"type": "insert", "sheet": spec.name, "row": initial_total, "added": added,
                                      "first_col": column, "last_col": spec.data.max_col}, ()))
         return Section(spec, first, total, column, spec.data.max_col - column + 1)
-
-    def requires_native(self, sheet, first, initial_total):
-        if (any(area.max_row >= initial_total for area in sheet.merged_cells.ranges)
-                or any(area.max_row >= first for rule in sheet.conditional_formatting for area in rule.sqref.ranges)
-                or any(area.max_row >= first for rule in sheet.data_validations.dataValidation
-                       for area in rule.sqref.ranges)
-                or sheet.tables):
-            return True
-        spec = self.blueprint.sheet(sheet.title)
-        for_sheet = {sheet.title, quote_sheetname(sheet.title)}
-        for (name, address), formula in self.existing.items():
-            if name == sheet.title:
-                if spec.detail_formulas is not None and address in spec.detail_formulas:
-                    continue
-                if coordinate_to_tuple(address)[0] >= initial_total or not isinstance(formula, str):
-                    return True
-                try:
-                    references = (token.value for token in Tokenizer(formula).items if token.subtype == "RANGE")
-                    if any("!" not in reference or reference.rsplit("!", 1)[0] in for_sheet
-                           for reference in references):
-                        return True
-                except TokenizerError:
-                    return True
-            elif isinstance(formula, str) and any(f"{title}!" in formula for title in for_sheet):
-                return True
-        return False
 
     def original_row(self, sheet, row):
         at, added = self.shifts.get(sheet, (row + 1, 0))

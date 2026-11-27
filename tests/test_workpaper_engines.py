@@ -14,6 +14,7 @@ from unittest.mock import patch
 from openpyxl import load_workbook
 from openpyxl.formatting.rule import CellIsRule
 from openpyxl.styles import PatternFill
+from openpyxl.workbook.defined_name import DefinedName
 
 from adapters.demo_kingdee import Adapter
 from core.accounts import Ledger
@@ -61,6 +62,20 @@ class BlueprintTest(unittest.TestCase):
                 book.save(template)
             with self.assertRaisesRegex(AuditError, "--engine xlwings"):
                 build(template, self.data, self.coverage, self.account, blueprint=self.blueprint)
+
+    def test_legacy_openpyxl_refuses_expansion_with_existing_total_references(self):
+        for name, change in (
+            ("same sheet", lambda book: setattr(book[DETAIL]["G10"], "value", "=F7")),
+            ("another sheet", lambda book: setattr(book[SUMMARY]["J9"], "value", f"='{DETAIL}'!F7")),
+            ("defined name", lambda book: book.defined_names.add(DefinedName("TOTAL_RANGE", attr_text=f"'{DETAIL}'!$F$7"))),
+        ):
+            with self.subTest(reference=name), TemporaryDirectory(dir=OUTPUT) as directory:
+                template = Path(directory) / "reference.xlsx"
+                with closing(load_workbook(self.blueprint.template)) as book:
+                    change(book)
+                    book.save(template)
+                with self.assertRaisesRegex(AuditError, "已有引用.*--engine xlwings"):
+                    build(template, self.data, self.coverage, self.account, blueprint=self.blueprint)
 
     def test_missing_native_engine_reports_error_without_workpaper(self):
         with TemporaryDirectory(dir=OUTPUT) as directory:

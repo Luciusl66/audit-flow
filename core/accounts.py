@@ -3,7 +3,7 @@
 from collections import defaultdict
 from dataclasses import dataclass
 
-from core.schema import ZERO
+from core.schema import PRIOR_AMOUNT_FIELDS, PRIOR_TB_SHEET, TB_AMOUNT_FIELDS, TB_SHEET, ZERO
 
 
 def leaf_rows(rows):
@@ -50,9 +50,10 @@ class BalanceIndex:
     exact: dict
     controls: dict
     roots: dict
+    ambiguous_auxiliary: tuple[tuple[str, int], ...]
 
     @classmethod
-    def build(cls, rows, parents, owners):
+    def build(cls, rows, parents, owners, amount_fields):
         exact = defaultdict(list)
         direct = defaultdict(list)
         for line, row in enumerate(rows, 2):
@@ -66,12 +67,21 @@ class BalanceIndex:
                 parent = parents.get(parent)
         children = defaultdict(list)
         controls = {}
+        ambiguous = []
         for code in sorted(codes, key=lambda value: (-len(value), value)):
+            if children[code]:
+                for line in direct[code]:
+                    row = rows[line - 2]
+                    if row.aux_name is not None and any(getattr(row, field) != ZERO for field in amount_fields):
+                        # The export does not say whether these are direct bookings or auxiliary rollups.
+                        ambiguous.append((code, line))
+                        break
             # A supplied subtotal is authoritative. With no subtotal, roll up
             # independently supplied child balances or same-code auxiliary detail.
             controls[code] = tuple(exact.get((code, None)) or children[code] or direct[code])
             children[parents.get(code)].extend(controls[code])
-        return cls(exact, controls, {code: controls[code] for code in sorted(codes) if owners[code] == code})
+        return cls(exact, controls, {code: controls[code] for code in sorted(codes) if owners[code] == code},
+                   tuple(ambiguous))
 
 
 class Ledger:
@@ -83,16 +93,24 @@ class Ledger:
         self.levels = {code: min(row.level for _, row in rows) for code, rows in self.by_code.items()}
         self.parents = account_parents(self.levels)
         self.owners = self.find_owners(self.levels, self.parents)
-        self.current = BalanceIndex.build(data.tb, self.parents, self.owners)
+        self.current = BalanceIndex.build(data.tb, self.parents, self.owners, TB_AMOUNT_FIELDS)
         grouped = defaultdict(list)
         for code, rows in self.by_code.items():
             grouped[self.owners[code]].extend(rows)
         self.members = dict(grouped)
         self.leaves = {code: tuple(leaf_rows(group)) for code, group in self.members.items()}
         prior_codes = {row.account_code for row in data.prior_tb or ()}
-        prior_parents = account_parents(self.levels, prior_codes)
-        self.prior_owners = self.find_owners(self.levels.keys() | prior_codes, prior_parents)
-        self.prior = BalanceIndex.build(data.prior_tb or (), prior_parents, self.prior_owners)
+        self.prior_parents = account_parents(self.levels, prior_codes)
+        self.prior_owners = self.find_owners(self.levels.keys() | prior_codes, self.prior_parents)
+        self.prior = BalanceIndex.build(data.prior_tb or (), self.prior_parents, self.prior_owners, PRIOR_AMOUNT_FIELDS)
+
+    def grain_issues(self, roots=None):
+        for index, owners, sheet in ((self.current, self.owners, TB_SHEET),
+                                     (self.prior, self.prior_owners, PRIOR_TB_SHEET)):
+            for code, line in index.ambiguous_auxiliary:
+                if roots is None or owners[code] in roots:
+                    yield (f"{sheet}!A{line} / {code}",
+                           "父科目同时存在非零辅助余额和下级科目。请核实辅助行的汇总范围后重新导入。", None)
 
     @staticmethod
     def find_owners(codes, parents):

@@ -191,6 +191,7 @@ class BaseFiller(ABC):
         detail = self.fill_detail()
         for sheet, fields, rows, count in raw_tables(self.data, self.ledger, self.detail_keys):
             self.writer.table(sheet, fields, rows, count, TABLE_FORMATS)
-        return SubjectLayout(frozenset(self.writer.generated), tuple(self.checks), tuple(self.issues),
+        issues = (*self.issues, *self.ledger.grain_issues(set(self.codes)))
+        return SubjectLayout(frozenset(self.writer.generated), tuple(self.checks), issues,
                              (summary.position(self.comparison_column, summary.total), detail,
                               self.comparison_amount()), self.counterparty_groups)

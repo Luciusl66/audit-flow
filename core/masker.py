@@ -110,7 +110,7 @@ def fake_amount(shape):
 
 def profile(path, sheet=1, header_row=1, encoding="utf-8-sig", delimiter=",", approved_headers=()):
     spec = SourceTable(sheet, header_row, encoding, delimiter)
-    with source_rows(path, spec, row_limit=header_row + SAMPLE_SIZE) as rows:
+    with source_rows(path, spec, row_limit=header_row + SAMPLE_SIZE, allow_cached_values=True) as rows:
         headers = next(islice(rows, header_row - 1, None), ())
         sample = list(islice(rows, SAMPLE_SIZE))
     width = max((len(row) for row in (headers, *sample)), default=0)

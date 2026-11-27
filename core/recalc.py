@@ -6,6 +6,7 @@ from importlib.util import find_spec
 import os
 from pathlib import Path
 from posixpath import join, normpath
+import re
 from shutil import which
 import subprocess
 import sys
@@ -14,6 +15,10 @@ from zipfile import BadZipFile, ZipFile
 from zlib import error as CompressionError
 
 from defusedxml.ElementTree import fromstring
+from openpyxl.formula.tokenizer import Tokenizer, TokenizerError
+from openpyxl.formula.translate import Translator, TranslatorError
+from openpyxl.worksheet.cell_range import CellRange
+from openpyxl.worksheet.formula import ArrayFormula, DataTableFormula
 
 MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -53,6 +58,10 @@ class BackendUnavailable(Exception):
     """An engine discovery failure with a fixed diagnostic safe for the report."""
 
 
+class FormulaMismatch(Exception):
+    """The recalculated formula could not be matched to the original formula."""
+
+
 def sheet_parts(archive):
     workbook = fromstring(archive.read("xl/workbook.xml"))
     links = fromstring(archive.read("xl/_rels/workbook.xml.rels"))
@@ -77,16 +86,70 @@ def formulas(book):
     }
 
 
+def formula_tokens(expression):
+    for token in Tokenizer(expression).items:
+        value = token.value
+        if token.subtype == "RANGE":
+            # Excel can omit quotes around simple sheet names when it resaves a file.
+            value = re.sub(r"^'([\w.]+)'(?=!)", r"\1", value)
+        elif token.type == "FUNC" and token.subtype == "OPEN":
+            value = value.upper()
+        yield token.type, token.subtype, value
+
+
+def same_formula(expected, saved, address, shared):
+    kind = saved.get("t", "normal")
+    if isinstance(expected, DataTableFormula):
+        if kind != "dataTable":
+            return False
+        original = dict(expected)
+        return all(saved.get(key) == original.get(key)
+                   for key in ("ref", "dt2D", "dtr", "r1", "r2", "del1", "del2"))
+    if isinstance(expected, ArrayFormula):
+        if kind != "array" or expected.ref != saved.get("ref"):
+            return False
+        expected = expected.text
+    elif kind not in ("normal", "shared"):
+        return False
+    if not isinstance(expected, str):
+        return False
+    try:
+        if kind == "shared":
+            origin, bounds, expression = shared[saved.get("si")]
+            if address not in bounds:
+                return False
+            actual = expression if address == origin else Translator(expression, origin=origin).translate_formula(address)
+        elif saved.text:
+            actual = f"={saved.text}"
+        else:
+            return False
+        return expected == actual or tuple(formula_tokens(expected)) == tuple(formula_tokens(actual))
+    except (KeyError, ValueError, TokenizerError, TranslatorError):
+        return False
+
+
 def read_caches(path, expected):
     caches = {}
     with ZipFile(path) as archive:
         parts = sheet_parts(archive)
         for name in {key[0] for key in expected} & parts.keys():
             root = fromstring(archive.read(parts[name]))
+            shared = {}
+            for cell in root.iter(tag("c")):
+                formula = cell.find(tag("f"))
+                if formula is None or formula.get("t") != "shared" or not formula.text:
+                    continue
+                group = formula.get("si")
+                if group is None or group in shared or not formula.get("ref") or not cell.get("r"):
+                    raise FormulaMismatch
+                shared[group] = cell.get("r"), CellRange(formula.get("ref")), f"={formula.text}"
             for cell in root.iter(tag("c")):
                 key = (name, cell.get("r"))
-                if key not in expected or cell.find(tag("f")) is None:
+                formula = cell.find(tag("f"))
+                if key not in expected or formula is None:
                     continue
+                if not same_formula(expected[key], formula, key[1], shared):
+                    raise FormulaMismatch
                 kind = cell.get("t", "n")
                 value = cell.find(tag("v"))
                 if value is not None and kind in {"n", "str", "b", "e"}:
@@ -203,6 +266,8 @@ def recalculate(source, expected, backend, timeout):
         else:
             try:
                 caches = read_caches(folder / source.name, expected)
+            except FormulaMismatch:
+                reason = "重算文件中的公式与待重算公式不一致"
             except FileNotFoundError:
                 reason = "未生成重算工作簿"
             except OSError:

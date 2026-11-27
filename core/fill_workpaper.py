@@ -16,7 +16,10 @@ from openpyxl.worksheet.cell_range import CellRange
 
 from core.accounts import Ledger, leaf_rows
 from core.blueprint import formula_signature, load_blueprint
-from core.excel_writer import check_template, excel_literal, literal, reject_merged_writes, require_excel_writer, run_excel_writer
+from core.excel_writer import (
+    check_template, excel_literal, insertion_requires_native, literal, reject_merged_writes, require_excel_writer,
+    run_excel_writer,
+)
 from core.recalc import formulas, write_caches
 from core.schema import AuditError, GL_FIELDS, GL_SHEET, PRIOR_TB_SHEET, TB_SHEET
 from core.workpaper_data import ACCOUNT_KEY_PREFIX, AJE, AMOUNT_FIELDS, AMOUNT_FORMAT, RAW_PRIOR_FIELDS, RAW_TB_FIELDS, TABLE_FORMATS, prior_records
@@ -36,6 +39,7 @@ class Coverage:
     detail_rows: tuple[int, ...]
     uncovered_codes: tuple[str, ...]
     tb_codes: frozenset[str]
+    grain_issues: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -53,7 +57,7 @@ class Layout:
         }
 
 
-def select_coverage(data, target):
+def select_coverage(data, target, *, ledger=None):
     roots = {row.account_code for row in data.tb if row.level == 1 and row.aux_name is None}
     selected = []
     uncovered = set()
@@ -70,8 +74,10 @@ def select_coverage(data, target):
         selected.append((index, row))
         if row.level == 1 and row.aux_name is None:
             root_rows.append(index)
+    if ledger is None:
+        ledger = Ledger(data)
     return Coverage(tuple(root_rows), tuple(index for index, _ in leaf_rows(selected)), tuple(sorted(uncovered)),
-                    frozenset(row.account_code for row in data.tb))
+                    frozenset(row.account_code for row in data.tb), tuple(ledger.grain_issues({target})))
 
 
 def tables(blueprint, data):
@@ -166,6 +172,11 @@ def build(template, data, coverage, ar_account, *, blueprint=None):
     book = load_workbook(template, keep_links=False)
     try:
         layout, frozen = prepare_layout(book, blueprint, data, coverage)
+        initial_total = layout.detail_start + 1
+        if layout.detail_total > initial_total and insertion_requires_native(
+                book[DETAIL], layout.detail_start, initial_total, blueprint.sheet(DETAIL).detail_formulas,
+                formulas(book), (DETAIL_TOTAL,)):
+            raise AuditError("此模板的明细扩行涉及合并、条件格式或已有引用。请使用 --engine xlwings。")
         for spec, names, records in tables(blueprint, data):
             openpyxl_table(book[spec.name], spec, names, records, data)
         fill_openpyxl_detail(book, blueprint, data, coverage, ar_account, layout)
@@ -183,9 +194,6 @@ def fill_openpyxl_detail(book, blueprint, data, coverage, ar_account, layout):
     added = total - start - 1
     if added:
         initial_total = start + 1
-        if (any(merged.max_row >= initial_total for merged in detail.merged_cells.ranges)
-                or any(region.max_row >= start for rule in detail.conditional_formatting for region in rule.sqref.ranges)):
-            raise AuditError("此模板的明细扩行涉及合并或条件格式。请使用 --engine xlwings。")
         total_height = detail.row_dimensions[initial_total].height
         detail.insert_rows(initial_total, added)
         detail.row_dimensions[total].height = total_height

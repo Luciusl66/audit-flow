@@ -47,14 +47,14 @@ python run.py --adapter demo_kingdee --subjects ALL --prior-tb data/mock/mock_pr
 
 Windows 也可用 `.\.venv\Scripts\python.exe` 代替 `python`。仓库随附模板和模拟数据，`python -m scripts.generate_demo` 可重建这些文件。真实账表按项目放在 `data/raw/`，同次运行的 TB 和 GL 应来自同一个目录、同一账套、期间和货币单位。
 
-- 探针支持 `.xlsx`、`.xlsm`、`.xltx`、`.xltm`、`.xls`、`.xlsb`、`.ods` 和 `.csv`。工作表号与表头行号从 1 开始。CSV 默认 UTF-8，其他编码或分隔符用 `--encoding`、`--delimiter`。探针只采样表头和随后最多十行。旧版或二进制格式使用文件中已保存的单元格值。
+- 探针支持 `.xlsx`、`.xlsm`、`.xltx`、`.xltm`、`.xls`、`.xlsb`、`.ods` 和 `.csv`。工作表号与表头行号从 1 开始。CSV 默认 UTF-8，其他编码或分隔符用 `--encoding`、`--delimiter`。探针只采样表头和随后最多十行。`.xls`、`.xlsb` 和 `.ods` 只能用于脱敏探针。生成底稿前，从账套重新导出纯值 XLSX 或 CSV 并在本地核对金额。
 - 探针原样公开通用表头和数据持有人批准的表头。其他表头返回 `null`。`--approved-headers` 接收 `data/raw/` 或 `data/mock/` 下经本地审核的 JSON 字符串数组，或列名到标准字段的映射。后者可为非标准摘要或客商列指定 `summary` 或 `aux_name`。摘要抹除，客商以本次画像内稳定的占位符替换，金额保持符号、括号、千分位习惯和小数位数。
 - 省略 `--subjects` 时沿用原应收入口，`--ar-account` 默认采用 Adapter 设置。显式传 `--subjects` 可用单个蓝图编码、逗号分隔列表或 `ALL`。单份底稿支持 `--out` 指定 ASCII 文件名。`--recalc` 取 `auto`、`xlwings` 或 `libreoffice`。
 - `--prior-tb` 提供同一账套的上年审定期末。省略时第 5 道门禁标记 `SKIPPED (未提供上年审定数)`，同比公式结果留空。
 - `--engine` 选择写入引擎。默认 `openpyxl`，写入阶段在本地直接处理 XLSX。`xlwings` 需要 Windows 上的本机 Excel 和 xlwings，使用后台 Excel 实例插入明细行、保留模板结构和复制报告。Excel 不可用时提示原因并退出。选用 `xlwings` 写入时，`--recalc auto` 使用 Excel 保存的重算结果。
-- 明细扩行涉及合并区域或条件格式时，使用 `--engine xlwings` 让 Excel 原生调整模板范围。原生写入遇到会被 Excel 截断的长文本时会提示改用 `--engine openpyxl`。
+- 明细扩行可能影响模板中的合并区域、条件格式或已有引用时，使用 `--engine xlwings` 让 Excel 原生调整。原生写入遇到会被 Excel 截断的长文本时会提示改用 `--engine openpyxl`。
 - `templates/blueprint.yaml` 锁定五类原型的模板、固定表头、写入锚点及保护公式。绑定精确总账编码、带 `*` 的总账编码前缀或列表，并按需在 `rules/cas_router.yaml` 配置规则。
-- 批量 Master TB 覆盖完整账套，各总账科目只采用一个层级。建议调整用于 Master TB 期末模拟，金额留待复核后另行录入。任何门禁失败时整批输出 `*.review.xlsx`。同名批次保存在新的 `data/output/run_<id>/` 目录。
+- 批量 Master TB 覆盖完整账套，各总账科目只采用一个层级。建议调整用于 Master TB 期末模拟，金额留待复核后另行录入。每次批量运行在全部文件就绪后发布 `data/output/run_<id>/`，其中包含 `00_Master_TB.xlsx` 和本次科目底稿。任何门禁失败时整批使用 `*.review.xlsx`。
 - 同名底稿和批量任务分别持有 `.claim-*` 运行锁。支持系统文件锁的本地目录可自动恢复元数据完整且已无人持有的本机锁。遇到旧版空锁、元数据损坏或状态不明时，错误会显示锁目录。请在本机确认该输出目录的相关任务均已停止，再手动移走提示中的锁目录并重试。
 - 退出码 0 表示 `PASS`。退出码 1 表示勾稽或重算 `FAILED`，生成 `*.review.xlsx`。退出码 2 表示参数、输入、契约或执行异常。
 - 模拟数据的终端输出可用于验收。真实数据默认只输出门禁状态，详细金额留在本地报告。数据持有人可在本地添加 `--local-amounts` 查看完整终端证据。
@@ -90,9 +90,9 @@ uv --no-config --no-python-downloads pip compile --universal --python-version 3.
 | --- | --- |
 | 1. 清洗前后守恒 | 从原始 TB 独立读取六列借贷金额，与标准化合计及行数比对，金额差异必须为 0.00 |
 | 2. 未映射兜底 | 原始范围内的有效记录全部写入底层页，未纳入应收底稿的科目逐一列出告警 |
-| 3. 跨表勾稽 | 审定表未审数、明细期末合计、Raw_TB 对应一级科目期末净额须一致 |
-| 4. 公式健康度 | 检查预期公式存在、公式缓存存在且无 Excel 错误 |
-| 5. 期初滚存勾稽 | 按科目编码和辅助核算比较本期未审期初与上年审定期末，差额必须为 0.00 |
+| 3. 跨表勾稽 | 核对审定表、明细和 TB 控制数。GL 在可比科目层级核对各自借贷发生额。Master TB 逐总账科目核对期初、本期发生和期末，并核对各阶段借贷平衡。父科目同时有非零辅助余额和下级科目时列为待复核 |
+| 4. 公式健康度 | 检查预期公式和公式缓存，拒绝错误值、缺少缓存或从不匹配的公式取得的缓存 |
+| 5. 期初滚存勾稽 | 按科目编码和辅助核算比较本期未审期初与上年审定期末，差额必须为 0.00。缺少可比余额时列为待补明细，同一差异在汇总层和明细层同时出现时避免重复拟分录 |
 
 新增客户见 `SKILL.md`。运行 `python -m unittest discover -s tests` 可验证脱敏、严格差额、未映射兜底、模板公式保留、缓存检查和运行锁恢复。无 Excel 环境照常运行这条命令。测试替身覆盖子进程调用和写入校验，实际 Excel 重算由原生集成测试验证。在安装本机 Microsoft Excel 的 Windows 环境中，设置 `AUDIT_FLOW_TEST_NATIVE_EXCEL=1` 可运行这组集成测试。
 

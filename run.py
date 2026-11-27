@@ -16,7 +16,7 @@ import warnings
 
 from openpyxl import Workbook
 
-from adapters.base_adapter import BaseAdapter, source_totals
+from adapters.base_adapter import BaseAdapter, require_audit_source, source_totals
 from core.accounts import Ledger
 from core.blueprint import load_blueprint, load_blueprints, matches_code
 from core.cas_checker import opening_suggestions, scan_counterparties, scan_routed, scan_tb, write_cas_sheet
@@ -26,7 +26,7 @@ from core.fill_workpaper import select_coverage, workpaper_writer
 from core.fillers import make_filler
 from core.masker import main as probe_main, safe_path
 from core.master_tb import MASTER_FILE, STAGES, build_master, check_master
-from core.recalc import Calculation, formulas, read_caches, recalculate, scan, write_caches
+from core.recalc import Calculation, FormulaMismatch, formulas, read_caches, recalculate, scan, write_caches
 from core.reconcile import (
     BATCH_COMPARISON_HEADERS, cached_money, check_batch_coverage, check_conservation, check_excel, check_opening, check_subject,
     combine_gates, console_lines, gates_passed, money, opening_differences, run_gates, write_report,
@@ -61,7 +61,7 @@ def parse_args(argv):
                         help="底稿写入引擎，默认 openpyxl")
     parser.add_argument("--recalc", choices=("auto", "libreoffice", "xlwings"), default="auto")
     parser.add_argument("--timeout", type=positive_integer, default=120, help="每次 Excel 原生写入或重算的超时秒数")
-    parser.add_argument("--out", help="data/output 下的 ASCII XLSX 文件名")
+    parser.add_argument("--out", help="单份底稿的 ASCII XLSX 文件名")
     parser.add_argument("--local-amounts", action="store_true", help="仅供本地数据持有人输出真实输入的金额证据")
     parser.add_argument("--cas-routed", action="store_true", help="启用按科目路由的 CAS 筛查")
     parser.add_argument("--complete-vouchers", action="store_true", help="确认凭证已核对完整")
@@ -104,7 +104,10 @@ def load_account_names(path):
 
 
 def native_calculation(path, actual):
-    caches = read_caches(path, actual)
+    try:
+        caches = read_caches(path, actual)
+    except FormulaMismatch:
+        raise AuditError("Excel 缓存对应公式与预期公式不一致。") from None
     return Calculation("xlwings", caches, scan(actual, caches))
 
 
@@ -136,6 +139,9 @@ def generate(args):
         prior, prior_kind = safe_path(args.prior_tb)
         if prior_kind != tb_kind or any(prior.samefile(path) for path in (tb, gl)):
             raise AuditError("上年审定数须为同类数据目录中的独立文件。")
+    for path in (tb, gl, prior):
+        if path is not None:
+            require_audit_source(path)
     with open(os.devnull, "w", encoding="utf-8") as quiet, redirect_stdout(quiet), redirect_stderr(quiet):
         adapter = load_adapter(args.adapter)
         source = source_totals(tb, adapter.tb_columns, adapter.tb_source, adapter.blank_tb_amounts_are_zero)
@@ -161,9 +167,10 @@ def generate(args):
 
 def generate_legacy(args, data, source, ar_account, account_names, adapter, show_amounts):
     blueprint = load_blueprint()
-    coverage = select_coverage(data, ar_account)
+    ledger = Ledger(data)
+    coverage = select_coverage(data, ar_account, ledger=ledger)
     name = args.out or f"ar_workpaper_{uuid4().hex[:16]}.xlsx"
-    differences = opening_differences(Ledger(data)) if data.prior_tb is not None else ()
+    differences = opening_differences(ledger)
     opening = check_opening(data, differences)
     output = store("output")
     approved = output / name
@@ -244,6 +251,10 @@ def finding_row(position):
 def scoped_findings(data, ledger, codes, findings):
     sources = {TB_SHEET: data.tb, GL_SHEET: data.gl}
     for finding in findings:
+        if finding.scope_codes:
+            if any(ledger.owner(code) in codes for code in finding.scope_codes):
+                yield finding
+            continue
         location = finding_row(finding.position)
         if location is not None:
             sheet, index = location
@@ -255,29 +266,16 @@ def scoped_findings(data, ledger, codes, findings):
 
 def publish_batch(output, staged, passed, scratch):
     names = [(source, Path(name) if passed else Path(name).with_suffix(".review.xlsx")) for source, name in staged]
-    if any(os.path.lexists(output / name) for _, name in names):
-        folder = scratch / "publish"
-        folder.mkdir()
-        for source, name in names:
-            source.rename(folder / name)
-        destination = output / f"run_{uuid4().hex[:16]}"
-        folder.rename(destination)
-        return [destination / name for _, name in names]
-
-    published = []
-    try:
-        for source, name in names:
-            destination = output / name
-            if os.name == "nt":
-                source.rename(destination)
-            else:
-                os.link(source, destination)
-            published.append(destination)
-    except BaseException:
-        for destination in published:
-            destination.unlink()
-        raise
-    return published
+    folder = scratch / "publish"
+    folder.mkdir()
+    for source, name in names:
+        source.rename(folder / name)
+    destination = output / f"run_{uuid4().hex[:16]}"
+    if os.path.lexists(destination):
+        raise AuditError("批次目录已存在，请重试。")
+    # The scratch directory and destination are on the same filesystem.
+    folder.rename(destination)
+    return [destination / name for _, name in names]
 
 
 def generate_batch(args, data, source, ar_account, account_names, adapter, show_amounts):
@@ -358,7 +356,8 @@ def generate_batch(args, data, source, ar_account, account_names, adapter, show_
         for position, issue, difference, _ in (*cross.findings, *health.findings):
             print(f"  {position} | {issue}" + (f" | diff={money(difference)}" if difference is not None else ""))
         for finding in roll_findings:
-            print(f"  期初滚调建议 | 借={finding.debit} | 贷={finding.credit} | 金额={money(finding.draft_amount)} | 待复核")
+            if finding.draft_amount is not None:
+                print(f"  期初滚调建议 | 借={finding.debit} | 贷={finding.credit} | 金额={money(finding.draft_amount)} | 待复核")
     for code in skipped:
         print(f"SUBJECT {code} SKIPPED | 本期 TB 无匹配科目")
     for code, archetype, cross, health, local_opening, balances in results:

@@ -5,17 +5,18 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
+from zipfile import ZipFile
 
 from openpyxl import Workbook, load_workbook
 
-from adapters.base_adapter import SourceCell, mapped_rows, source_totals
+from adapters.base_adapter import SourceCell, mapped_rows, source_rows, source_totals
 from adapters.demo_kingdee import Adapter, GL_COLUMNS, TB_COLUMNS
 from core.fill_workpaper import DETAIL, DETAIL_TOTAL, SUMMARY, build, select_coverage
 from core.masker import profile
 from core.recalc import Cache, Calculation, formulas, scan, write_caches
 from core.reconcile import REPORT, Gate, check_conservation, check_coverage, check_cross, check_excel, write_report
 from core.schema import AuditError, GL_SHEET, TB_SHEET, account_code, validate
-from run import store
+from run import generate, parse_args, store
 from scripts.generate_demo import raw_sum
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -78,6 +79,55 @@ class WorkpaperTest(unittest.TestCase):
             self.assertNotIn(secret, output)
         self.assertEqual(approved["columns"][4]["header"], "Private Header")
         self.assertTrue(all(row[4] is None for row in approved["masked_sample"]))
+
+    def test_cached_ods_formula_is_available_only_to_masked_probe(self):
+        content = """<?xml version="1.0" encoding="UTF-8"?>
+        <office:document-content
+            xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+            xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"
+            xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" office:version="1.2">
+          <office:body><office:spreadsheet><table:table table:name="合成">
+            <table:table-row><table:table-cell office:value-type="string">
+              <text:p>借方金额</text:p>
+            </table:table-cell></table:table-row>
+            <table:table-row><table:table-cell table:formula="of:=1+1" office:value-type="float" office:value="9">
+              <text:p>9</text:p>
+            </table:table-cell></table:table-row>
+          </table:table></office:spreadsheet></office:body>
+        </office:document-content>"""
+        manifest = """<?xml version="1.0" encoding="UTF-8"?>
+        <manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0">
+          <manifest:file-entry manifest:full-path="/" manifest:media-type="application/vnd.oasis.opendocument.spreadsheet"/>
+          <manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/>
+        </manifest:manifest>"""
+        with TemporaryDirectory(dir=ROOT / "data" / "output") as tmp:
+            path = Path(tmp) / "synthetic.ods"
+            with ZipFile(path, "w") as archive:
+                archive.writestr("mimetype", "application/vnd.oasis.opendocument.spreadsheet")
+                archive.writestr("content.xml", content)
+                archive.writestr("META-INF/manifest.xml", manifest)
+            result = profile(path)
+            self.assertEqual(result["columns"][0]["types"], {"number_cell": 1})
+            self.assertEqual(Decimal(result["masked_sample"][0][0]), Decimal("100"))
+            with self.assertRaisesRegex(AuditError, "只能用于脱敏探针"), source_rows(path):
+                self.fail("底稿读取不应取得只有缓存的单元格")
+
+    def test_all_audit_inputs_reject_cached_only_formats_before_loading_adapter(self):
+        with TemporaryDirectory(dir=ROOT / "data" / "output") as tmp:
+            directory = Path(tmp)
+            verified = [directory / f"{name}.xlsx" for name in ("tb", "gl", "prior")]
+            for index, suffix in enumerate((".xls", ".xlsb", ".ods")):
+                with self.subTest(input_index=index, suffix=suffix):
+                    paths = list(verified)
+                    paths[index] = paths[index].with_suffix(suffix)
+                    for path in paths:
+                        path.touch()
+                    args = parse_args(["--adapter", "demo_kingdee", "--tb", str(paths[0]),
+                                       "--gl", str(paths[1]), "--prior-tb", str(paths[2])])
+                    with (patch("run.safe_path", side_effect=[(path, "mock") for path in paths]),
+                          patch("run.load_adapter") as adapter, self.assertRaisesRegex(AuditError, "只能用于脱敏探针")):
+                        generate(args)
+                    adapter.assert_not_called()
 
     def test_conservation_rejects_a_one_cent_change_or_discarded_row(self):
         source = source_totals(self.tb_path, self.adapter.tb_columns, self.adapter.tb_source, False)

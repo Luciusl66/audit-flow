@@ -10,7 +10,8 @@ from openpyxl import load_workbook
 
 from core.schema import AuditError, StandardData, StandardPriorTB, TB_AMOUNT_FIELDS, ZERO, amount_value
 
-SOURCE_TYPES = {".csv", ".xlsx", ".xlsm", ".xltx", ".xltm", ".xls", ".xlsb", ".ods"}
+CACHED_SOURCE_TYPES = {".xls", ".xlsb", ".ods"}
+SOURCE_TYPES = {".csv", ".xlsx", ".xlsm", ".xltx", ".xltm"} | CACHED_SOURCE_TYPES
 
 
 @dataclass(frozen=True)
@@ -28,8 +29,14 @@ class SourceTable:
     delimiter: str = ","
 
 
+def require_audit_source(path):
+    if path.suffix.lower() in CACHED_SOURCE_TYPES:
+        # Calamine supplies cached values without the original formula or error type.
+        raise AuditError(".xls、.xlsb 和 .ods 只能用于脱敏探针。生成底稿前请在本机从账套导出纯值 XLSX 或 CSV 并核对金额。")
+
+
 @contextmanager
-def source_rows(path: Path, spec=SourceTable(), *, row_limit=None):
+def source_rows(path: Path, spec=SourceTable(), *, row_limit=None, allow_cached_values=False):
     extension = path.suffix.lower()
     if extension == ".csv":
         if spec.sheet != 1:
@@ -51,7 +58,9 @@ def source_rows(path: Path, spec=SourceTable(), *, row_limit=None):
             )
         finally:
             book.close()
-    elif extension in {".xls", ".xlsb", ".ods"}:
+    elif extension in CACHED_SOURCE_TYPES:
+        if not allow_cached_values:
+            require_audit_source(path)
         from python_calamine import CalamineWorkbook
 
         with CalamineWorkbook.from_path(path) as book:

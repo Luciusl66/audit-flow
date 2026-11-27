@@ -1,3 +1,4 @@
+from contextlib import closing
 from pathlib import Path
 from subprocess import DEVNULL, CalledProcessError, TimeoutExpired
 import sys
@@ -5,16 +6,83 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+from xml.etree.ElementTree import fromstring, tostring
+from zipfile import ZipFile
 
 from openpyxl import Workbook
 
-from core.recalc import Cache, recalculate
+from core.recalc import Cache, FormulaMismatch, read_caches, recalculate, sheet_parts, tag
 from core.reconcile import REPORT, Gate, write_report
-from core.schema import TB_AMOUNT_FIELDS, ZERO
+from core.schema import AuditError, TB_AMOUNT_FIELDS, ZERO
+from run import native_calculation
 
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED = {("SUMMARY", "B9"): "=1+1"}
 CACHES = {("SUMMARY", "B9"): Cache("n", "2")}
+
+
+def saved_formulas(path, cells):
+    """Write a synthetic workbook with the requested formula XML and cached values."""
+    original = path.with_name("unevaluated.xlsx")
+    with closing(Workbook()) as book:
+        sheet = book.active
+        sheet.title = "SUMMARY"
+        book.create_sheet("明细")
+        for address in cells:
+            sheet[address] = "=0"
+        book.save(original)
+    with ZipFile(original) as source, ZipFile(path, "w") as target:
+        part = sheet_parts(source)["SUMMARY"]
+        for item in source.infolist():
+            payload = source.read(item.filename)
+            if item.filename == part:
+                root = fromstring(payload)
+                for cell in root.iter(tag("c")):
+                    attributes, text, cache = cells[cell.get("r")]
+                    formula = cell.find(tag("f"))
+                    formula.attrib.update(attributes)
+                    formula.text = text
+                    cell.find(tag("v")).text = cache
+                payload = tostring(root)
+            target.writestr(item, payload)
+
+
+class CacheProvenanceTest(unittest.TestCase):
+    def test_accepts_shared_formula_translation_and_equivalent_sheet_quotes(self):
+        expected = {("SUMMARY", "B9"): "=sum('明细'!A1,$A$1)", ("SUMMARY", "B10"): "=SUM('明细'!A2,$A$1)"}
+        cells = {"B9": ({"t": "shared", "si": "0", "ref": "B9:B10"}, "SUM(明细!A1,$A$1)", "2"),
+                 "B10": ({"t": "shared", "si": "0"}, None, "3")}
+        with TemporaryDirectory(dir=ROOT / "data" / "output") as temporary:
+            path = Path(temporary) / "saved.xlsx"
+            saved_formulas(path, cells)
+            self.assertEqual(read_caches(path, expected),
+                             {("SUMMARY", "B9"): Cache("n", "2"), ("SUMMARY", "B10"): Cache("n", "3")})
+            wrong_follower = {**expected, ("SUMMARY", "B10"): "=SUM('明细'!A1,$A$1)"}
+            with self.assertRaises(FormulaMismatch):
+                read_caches(path, wrong_follower)
+
+    def test_rejects_changed_formula_even_when_cached_number_matches(self):
+        with TemporaryDirectory(dir=ROOT / "data" / "output") as temporary:
+            source = Path(temporary) / "stage.xlsx"
+
+            def run(*args, cwd, **kwargs):
+                saved_formulas(cwd / source.name, {"B9": ({}, "1*2", "2")})
+
+            with (patch("core.recalc.soffice_path", return_value="soffice"),
+                  patch("core.recalc.subprocess.run", side_effect=run)):
+                calculation = recalculate(source, EXPECTED, "libreoffice", 1)
+            self.assertEqual(calculation.backend, "unavailable")
+            self.assertEqual(calculation.caches, {})
+            self.assertEqual(calculation.note, "libreoffice: 重算文件中的公式与待重算公式不一致")
+            with self.assertRaisesRegex(AuditError, "Excel 缓存对应公式与预期公式不一致"):
+                native_calculation(source.parent / "libreoffice" / source.name, EXPECTED)
+
+    def test_formula_comparison_preserves_quoted_string_contents(self):
+        with TemporaryDirectory(dir=ROOT / "data" / "output") as temporary:
+            path = Path(temporary) / "saved.xlsx"
+            saved_formulas(path, {"B9": ({}, 'EXACT(" A ","a")', "0")})
+            with self.assertRaises(FormulaMismatch):
+                read_caches(path, {("SUMMARY", "B9"): '=EXACT(" A ","A")'})
 
 
 class RecalculationDiagnosticsTest(unittest.TestCase):

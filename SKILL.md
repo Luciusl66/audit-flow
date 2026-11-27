@@ -21,9 +21,10 @@ description: 从脱敏画像编写客户 Adapter，在本地批量生成实质�
 ## 执行入口
 
 - 已有审核过的 Adapter 时，核对本次账套、期间、币种口径和适用蓝图，直接运行 `python run.py --adapter <name> --tb <path> --gl <path>`。新账套从下文的脱敏探针开始。
-- 使用 `--subjects 1122`、`--subjects 1002,1122,6001` 或 `--subjects ALL` 调度科目。批量运行生成科目底稿和 `data/output/00_Master_TB.xlsx`。Master TB 以总账粒度覆盖完整账套，标明本次调度范围。
+- 使用 `--subjects 1122`、`--subjects 1002,1122,6001` 或 `--subjects ALL` 调度科目。批量运行在所有文件就绪后发布 `data/output/run_<id>/`，内含科目底稿和 Master TB。Master TB 以总账粒度覆盖完整账套，标明本次调度范围。
 - 提供 `--prior-tb <path>` 时，以同一账套和币种的上年审定期末核对本期未审期初，保留科目编码及辅助核算。首次审计省略该参数时，报告显示 `SKIPPED (未提供上年审定数)`。审定表的上年数从 `Raw_Prior_TB` 取数，自动计算同比。
-- `--engine` 选择写入引擎，默认 `openpyxl`。明细扩行涉及合并单元格或条件格式时，使用 `--engine xlwings`，需要 Windows、本机 Excel 和 xlwings。`--recalc` 单独控制公式重算，默认 `auto`。使用 `--engine xlwings --recalc auto` 时，采用 Excel 保存的重算结果。
+- `.xls`、`.xlsb` 和 `.ods` 仅供脱敏探针使用。生成底稿前，由数据持有人在本地从账套重新导出纯值 XLSX 或 CSV 并核对金额。
+- `--engine` 选择写入引擎，默认 `openpyxl`。明细扩行可能影响模板合并单元格、条件格式或已有引用时，使用 `--engine xlwings`，需要 Windows、本机 Excel 和 xlwings。`--recalc` 单独控制公式重算，默认 `auto`。程序仅接收与待重算公式匹配的缓存。
 - 遇到运行锁状态不明时，按报错路径在本机核对 `.claim-*`。确认该输出目录的相关任务均已停止后，再手动移走锁目录并重试。
 - 常规安装和锁文件复现见 `README.md` 的「依赖锁」。`python -m unittest discover -s tests` 可在无 Excel 环境执行。替身测试覆盖调用及校验行为，实际重算以可用后端的合成用例结果为准。
 - 常规底稿使用默认 CAS 通用筛查。明确要求按科目筛查时，给生成命令加 `--cas-routed`，按下文确认所需参数。
@@ -44,7 +45,7 @@ description: 从脱敏画像编写客户 Adapter，在本地批量生成实质�
 1. 将事务所原版空白模板放入 `templates/`。核对现有工作表、表头和口径。逆向识别审定表及明细表的数据起点、合计行、公式区和 AJE 输入区，并在 Excel 中定义对应的命名锚点。可用 `templates/blueprint.yaml` 的样例对照锚点名称和列顺序。
 2. 在 `templates/blueprint.yaml` 配置科目编码、`template_path`、`account_codes`、各页锚点和公式保护区域。单个编码关联其总账科目及后代明细。前缀在末尾加 `*`。列表可关联多个总账科目。贷方口径使用 `normal_balance: credit`。资产底稿用 `contra_account_codes` 标记配对备抵科目。
 3. 根据业务口径选定 `archetype`。普通末级汇总用 `flat_tb`，往来客商重分类用 `counterparty_tb`，损益月度分析用 `gl_monthly_pivot`，资产原值及备抵用 `asset_rollforward`，税费与薪酬分拆用 `tax_schedule`。在 `rules/cas_router.yaml` 按已核实科目关联适用规则。**严禁为单个科目新建独立 Python 业务脚本。**
-4. 使用合成样例跑单科目、所需批量范围和上年差异用例。检查写入行及保护公式，复核 Master TB 的借贷差额和待核建议。期初差异的建议分录留在 `01_准则异常与调整建议`，对方科目由复核人按上期已批准分录确认。
+4. 使用合成样例跑单科目、所需批量范围和上年差异用例。检查写入行及保护公式，复核 Master TB 的借贷差额和待核建议。期初差异的建议和缺少可比明细的提示留在 `01_准则异常与调整建议`。有金额的滚调草案由复核人按上期已批准分录确认对方科目。
 
 ## 准则按需加载协议
 

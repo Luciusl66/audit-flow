@@ -8,7 +8,7 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 
 from adapters.demo_kingdee import Adapter
 from core.accounts import Ledger
@@ -16,11 +16,11 @@ from core.blueprint import load_blueprints
 from core.cas_checker import CAS_SHEET, opening_suggestions
 from core.excel_writer import ExcelWriter
 from core.fillers import make_filler
-from core.master_tb import MASTER_FILE, MASTER_SHEET, PROPOSALS
-from core.recalc import Cache, formulas, read_caches, scan
+from core.master_tb import MASTER_FILE, MASTER_SHEET, PROPOSALS, build_master, check_master
+from core.recalc import Cache, Calculation, formulas, read_caches, scan
 from core.reconcile import REPORT, cached_money, check_opening, opening_differences
-from core.schema import AuditError, PRIOR_TB_SHEET
-from run import ROOT, main, select_subjects
+from core.schema import AuditError, PRIOR_TB_SHEET, StandardData, StandardPriorTB, StandardTB, ZERO
+from run import ROOT, main, publish_batch, select_subjects
 
 MOCK = ROOT / "data" / "mock"
 OUTPUT = ROOT / "data" / "output"
@@ -31,6 +31,20 @@ PRIOR = MOCK / "mock_prior_tb.xlsx"
 def demo_data():
     adapter = Adapter()
     return replace(adapter.transform(TB, GL), prior_tb=adapter.convert_prior_tb(PRIOR))
+
+
+def synthetic_balance(code, level, amount, *, auxiliary=None, credit=False):
+    dr, cr = (ZERO, Decimal(amount)) if credit else (Decimal(amount), ZERO)
+    return StandardTB(code, "合成科目", level, "贷" if credit else "借", dr, cr, ZERO, ZERO, dr, cr, auxiliary)
+
+
+def master_gate(ledger, owners):
+    with closing(Workbook()) as book:
+        layout = build_master(book, ledger, owners, (), None)
+    # Keep all worksheet comparisons green to isolate the independent gate checks.
+    caches = {check.position: Cache("str" if isinstance(check.expected, str) else "n", str(check.expected))
+              for check in (*layout.checks, *layout.differences)}
+    return check_master(layout, Calculation("mock", caches, ()))
 
 
 class BatchWorkpaperTest(unittest.TestCase):
@@ -53,6 +67,56 @@ class BatchWorkpaperTest(unittest.TestCase):
         self.assertIn("1122.01", suggestion.credit)
         self.assertEqual(suggestion.draft_amount, Decimal("0.01"))
         self.assertEqual(check_opening(replace(data, prior_tb=None), ()).status, "SKIPPED")
+
+    def test_opening_does_not_infer_missing_auxiliary_amount(self):
+        tb = (synthetic_balance("1122", 1, "10.00"), synthetic_balance("1122", 1, "10.00", auxiliary="合成客商"))
+        prior = StandardPriorTB("1122", "合成科目", Decimal("10.00"), ZERO)
+        for data in (
+            StandardData(tb, (), (prior,)),
+            StandardData(tb[:1], (), (prior, replace(prior, aux_name="合成客商"))),
+        ):
+            with self.subTest(has_current_detail=len(data.tb) > 1):
+                difference, = opening_differences(Ledger(data))
+                self.assertIsNone(difference.difference)
+                self.assertEqual(difference.auxiliary, "合成客商")
+                gate = check_opening(data, (difference,))
+                self.assertEqual(gate.status, "FAILED")
+                self.assertIn("缺少可比", gate.findings[0][1])
+                _, (finding,) = opening_suggestions((difference,))
+                self.assertEqual((finding.entry_type, finding.draft_amount), ("期初明细待补", None))
+                self.assertFalse(finding.debit or finding.credit)
+
+    def test_opening_does_not_propose_the_same_amount_at_parent_and_auxiliary(self):
+        tb = (synthetic_balance("1122", 1, "20.00"),
+              synthetic_balance("1122.01", 2, "20.00", auxiliary="合成客商"))
+        prior = (StandardPriorTB("1122", "合成科目", Decimal("10.00"), ZERO),
+                 StandardPriorTB("1122.01", "合成科目", Decimal("10.00"), ZERO, "合成客商"))
+        data = StandardData(tb, (), prior)
+        differences = opening_differences(Ledger(data))
+        self.assertEqual([item.difference for item in differences], [Decimal("10.00")] * 2)
+        self.assertEqual(check_opening(data, differences).failed, 2)
+        _, (total, detail) = opening_suggestions(differences)
+        self.assertIsNone(total.draft_amount)
+        self.assertEqual((detail.debit, detail.draft_amount), ("待核实对方科目", Decimal("10.00")))
+
+    def test_master_flags_parent_auxiliary_with_children_in_either_period(self):
+        detail = synthetic_balance("1002.01", 2, "20.00")
+        equity = synthetic_balance("4001", 1, "20.00", credit=True)
+        extra = synthetic_balance("1002", 1, "10.00", auxiliary="合成明细")
+        clean_prior = tuple(StandardPriorTB(row.account_code, row.account_name, row.close_debit, row.close_credit)
+                            for row in (detail, equity))
+        extra_prior = StandardPriorTB(extra.account_code, extra.account_name, extra.close_debit, ZERO, extra.aux_name)
+        for tb, prior, sheet in (
+            ((extra, detail, equity), clean_prior, "Raw_TB"),
+            ((detail, equity), (extra_prior, *clean_prior), PRIOR_TB_SHEET),
+        ):
+            with self.subTest(sheet=sheet):
+                ledger = Ledger(StandardData(tb, (), prior))
+                gate = master_gate(ledger, {})
+                self.assertEqual(gate.failed, 1)
+                self.assertEqual(gate.findings[0][0], f"{sheet}!A2 / 1002")
+                self.assertIn("辅助余额", gate.findings[0][1])
+                self.assertFalse(tuple(ledger.grain_issues({"4001"})))
 
     def test_optional_prior_auxiliary_column_and_strict_source_amounts(self):
         with TemporaryDirectory(dir=OUTPUT) as directory:
@@ -87,7 +151,49 @@ class BatchWorkpaperTest(unittest.TestCase):
         with TemporaryDirectory(dir=OUTPUT) as directory:
             with ExcelWriter("openpyxl", load_blueprints()["6001"], Path(directory), 30) as writer:
                 layout = make_filler(writer, Ledger(changed), ("6001",)).populate()
-                self.assertEqual([issue[2] for issue in layout.issues], [cent, cent])
+                self.assertEqual([(position, amount) for position, _, amount in layout.issues],
+                                 [("Standard_GL / 6001", cent)] * 2 + [("Standard_GL / 6001.01", cent)] * 2)
+
+    def test_gl_detects_turnover_moved_between_details_with_same_total(self):
+        data = demo_data()
+        voucher = next(row for row in data.gl if row.account_code == "6001.01" and row.credit > ZERO)
+        reallocated = tuple(replace(row, account_code="6001.02") if row is voucher else row for row in data.gl)
+        with TemporaryDirectory(dir=OUTPUT) as directory:
+            with ExcelWriter("openpyxl", load_blueprints()["6001"], Path(directory), 30) as writer:
+                layout = make_filler(writer, Ledger(replace(data, gl=reallocated)), ("6001",)).populate()
+                self.assertEqual([(position, amount) for position, _, amount in layout.issues],
+                                 [("Standard_GL / 6001.01", -voucher.credit), ("Standard_GL / 6001.02", voucher.credit)])
+
+    def test_gl_only_compares_available_grain_when_all_postings_are_at_root(self):
+        data = demo_data()
+        summary = tuple(replace(row, account_code="6001") if row.account_code.startswith("6001.") else row
+                        for row in data.gl)
+        with TemporaryDirectory(dir=OUTPUT) as directory:
+            with ExcelWriter("openpyxl", load_blueprints()["6001"], Path(directory), 30) as writer:
+                layout = make_filler(writer, Ledger(replace(data, gl=summary)), ("6001",)).populate()
+                self.assertEqual(layout.issues, ())
+
+    def test_gl_mixed_grains_do_not_hide_a_detail_mismatch(self):
+        data = demo_data()
+        voucher = next(row for row in data.gl if row.account_code == "6001.01" and row.credit > ZERO)
+        mixed = tuple(replace(row, account_code="6001") if row is voucher else row for row in data.gl)
+        with TemporaryDirectory(dir=OUTPUT) as directory:
+            with ExcelWriter("openpyxl", load_blueprints()["6001"], Path(directory), 30) as writer:
+                layout = make_filler(writer, Ledger(replace(data, gl=mixed)), ("6001",)).populate()
+                self.assertEqual(len(layout.issues), 1)
+                self.assertIn("GL 同时存在本科目及下级发生额", layout.issues[0][1])
+
+    def test_master_rollforward_detects_offsetting_errors_in_unselected_roots(self):
+        data = demo_data()
+        hundred = Decimal("100.00")
+        changed = tuple(replace(row, close_credit=row.close_credit + hundred) if row.account_code == "6001"
+                        else replace(row, close_debit=row.close_debit + hundred) if row.account_code == "6602"
+                        else row for row in data.tb)
+        gate = master_gate(Ledger(replace(data, tb=changed)), {"1122": "1122"})
+        self.assertEqual(gate.failed, 2)
+        self.assertEqual([(position.rsplit(" / ", 1)[1], amount) for position, _, amount, _ in gate.findings],
+                         [("6001", -hundred), ("6602", hundred)])
+
 
     def test_asset_allowance_cap_and_excel_serialization_are_exact(self):
         data = demo_data()
@@ -102,6 +208,39 @@ class BatchWorkpaperTest(unittest.TestCase):
         self.assertEqual(cached_money(Cache("n", "26632.799999999999")), Decimal("26632.80"))
         self.assertEqual(cached_money(Cache("n", "307.14999999999998")), Decimal("307.15"))
         self.assertEqual(cached_money(Cache("n", "307.1501")), Decimal("307.1501"))
+
+    def test_batch_becomes_visible_only_when_every_file_is_ready(self):
+        with TemporaryDirectory(dir=OUTPUT) as directory:
+            output = Path(directory)
+            existing = output / MASTER_FILE
+            existing.write_bytes(b"previous synthetic output")
+            scratch = output / ".run-test"
+            scratch.mkdir()
+            subject = scratch / "subject.xlsx"
+            subject.write_bytes(b"synthetic subject")
+            master = scratch / "master.xlsx"
+            staged = ((subject, "1122_workpaper.xlsx"), (master, MASTER_FILE))
+            with self.assertRaises(FileNotFoundError):
+                publish_batch(output, staged, True, scratch)
+            self.assertEqual(list(output.glob("run_*")), [])
+            self.assertEqual(list(output.glob("*.xlsx")), [existing])
+            self.assertEqual(existing.read_bytes(), b"previous synthetic output")
+
+    def test_batch_publication_uses_one_directory_and_consistent_review_suffix(self):
+        for passed in (True, False):
+            with self.subTest(passed=passed), TemporaryDirectory(dir=OUTPUT) as directory:
+                output = Path(directory)
+                scratch = output / ".run-test"
+                scratch.mkdir()
+                first, second = scratch / "subject.xlsx", scratch / "master.xlsx"
+                first.write_bytes(b"synthetic subject")
+                second.write_bytes(b"synthetic master")
+                paths = publish_batch(output, ((first, "1122_workpaper.xlsx"), (second, MASTER_FILE)), passed, scratch)
+                batch, = output.glob("run_*")
+                self.assertEqual(set(paths), set(batch.iterdir()))
+                suffix = ".xlsx" if passed else ".review.xlsx"
+                self.assertEqual([path.name for path in paths], [f"1122_workpaper{suffix}", f"00_Master_TB{suffix}"])
+                self.assertEqual(list(output.glob("*.xlsx")), [])
 
 
 @unittest.skipUnless(os.environ.get("AUDIT_FLOW_TEST_NATIVE_EXCEL") == "1", "requires local Windows Excel")
@@ -121,10 +260,11 @@ class NativeBatchWorkpaperTest(unittest.TestCase):
                 status = main(args)
             self.assertEqual(status, 0, f"{stderr.getvalue()}\n{stdout.getvalue()}")
             self.assertIn("GATE 5 PASS" if expected_prior else "GATE 5 SKIPPED (未提供上年审定数)", stdout.getvalue())
+            batch, = output.glob("run_*")
             blueprints = load_blueprints()
             codes = blueprints if expected_prior else ("1122",)
             for code in codes:
-                path = output / f"{code}_workpaper.xlsx"
+                path = batch / f"{code}_workpaper.xlsx"
                 with closing(load_workbook(path)) as book:
                     actual = formulas(book)
                     self.assertFalse(scan(actual, read_caches(path, actual)))
@@ -132,12 +272,12 @@ class NativeBatchWorkpaperTest(unittest.TestCase):
                     self.assertEqual(book[REPORT]["B11"].value,
                                      "PASS" if expected_prior else "SKIPPED (未提供上年审定数)")
                     self.assertEqual(book[PRIOR_TB_SHEET].max_row > 1, expected_prior)
-            with closing(load_workbook(output / MASTER_FILE, data_only=True)) as book:
+            with closing(load_workbook(batch / MASTER_FILE, data_only=True)) as book:
                 proposal, = [row for row in book[PROPOSALS].values if row[1] == "RJE 待确认"]
                 self.assertEqual(proposal[9:11], (75, "纳入模拟"))
                 self.assertIn("PASS", [cell.value for cell in book[MASTER_SHEET]["N"]])
                 self.assertIn("本次底稿", [cell.value for cell in book[MASTER_SHEET]["C"]])
-            with closing(load_workbook(output / "1122_workpaper.xlsx", data_only=True)) as book:
+            with closing(load_workbook(batch / "1122_workpaper.xlsx", data_only=True)) as book:
                 self.assertIn("RJE 待确认", [cell.value for cell in book[CAS_SHEET]["H"]])
                 self.assertIsNone(book["AJE"]["B6"].value)
 
