@@ -1,7 +1,6 @@
 """Populate source tabs and expand the AR detail without editing summary formulas."""
 
 from abc import ABC, abstractmethod
-from collections import defaultdict
 from contextlib import closing
 from copy import copy
 from dataclasses import astuple, dataclass
@@ -9,33 +8,26 @@ from datetime import date
 from decimal import Decimal
 import json
 from shutil import copyfile
-from zipfile import ZipFile
-
-from defusedxml.ElementTree import fromstring
 from openpyxl import Workbook, load_workbook
 from openpyxl.utils import coordinate_to_tuple, get_column_letter, quote_sheetname
 from openpyxl.utils.datetime import to_excel
 from openpyxl.workbook.properties import CalcProperties
 from openpyxl.worksheet.cell_range import CellRange
 
+from core.accounts import Ledger, leaf_rows
 from core.blueprint import formula_signature, load_blueprint
-from core.excel_writer import excel_literal, require_excel_writer, run_excel_writer
+from core.excel_writer import check_template, excel_literal, literal, reject_merged_writes, require_excel_writer, run_excel_writer
 from core.recalc import formulas, write_caches
-from core.schema import AuditError, GL_FIELDS, GL_SHEET, TB_FIELDS, TB_SHEET, TB_AMOUNT_FIELDS
+from core.schema import AuditError, GL_FIELDS, GL_SHEET, PRIOR_TB_SHEET, TB_SHEET
+from core.workpaper_data import ACCOUNT_KEY_PREFIX, AJE, AMOUNT_FIELDS, AMOUNT_FORMAT, RAW_PRIOR_FIELDS, RAW_TB_FIELDS, TABLE_FORMATS, prior_records
 
 DETAIL = "应收账款明细表"
 SUMMARY = "应收账款审定表"
-AJE = "AJE"
 DETAIL_FIRST = "AR_DETAIL_FIRST"
 DETAIL_TOTAL = "AR_DETAIL_TOTAL"
 SUMMARY_FIRST = "AR_SUMMARY_FIRST"
 DETAIL_HEADERS = ("科目编码", "客商 / 辅助核算", "期初净额", "本期借方", "本期贷方", "期末余额")
 SUMMARY_LABELS = ("期初净额", "本期借方", "本期贷方", "未审数", "审计调整", "审定数")
-AMOUNT_FORMAT = '#,##0.00;(#,##0.00);"-"'
-RAW_TB_FIELDS = (*TB_FIELDS, "account_key")
-ACCOUNT_KEY_PREFIX = "acct:"
-AMOUNT_FIELDS = frozenset((*TB_AMOUNT_FIELDS, "debit", "credit"))
-TABLE_FORMATS = {**dict.fromkeys(AMOUNT_FIELDS, AMOUNT_FORMAT), "date": "yyyy-mm-dd", "level": "0"}
 
 
 @dataclass(frozen=True)
@@ -61,21 +53,6 @@ class Layout:
         }
 
 
-def leaf_rows(rows):
-    """Use terminal accounts and prefer auxiliary detail over its same-code subtotal."""
-    by_code = defaultdict(list)
-    for index, record in rows:
-        by_code[record.account_code].append((index, record))
-    levels = {code: min(record.level for _, record in group) for code, group in by_code.items()}
-    rollups = {
-        code[:end] for code, level in levels.items()
-        for end in range(1, len(code)) if levels.get(code[:end], level) < level
-    }
-    for code in sorted(by_code.keys() - rollups):
-        group = by_code[code]
-        yield from ([item for item in group if item[1].aux_name is not None] or group)
-
-
 def select_coverage(data, target):
     roots = {row.account_code for row in data.tb if row.level == 1 and row.aux_name is None}
     selected = []
@@ -97,45 +74,25 @@ def select_coverage(data, target):
                     frozenset(row.account_code for row in data.tb))
 
 
-def literal(cell, value):
-    cell.value = value
-    if isinstance(value, str):
-        cell.data_type = "s"
-
-
-def check_template(path):
-    blocked = ("externallinks/", "connections.xml", "querytables/", "vbaproject", "activex/", "embeddings/")
-    with ZipFile(path) as archive:
-        for name in archive.namelist():
-            if any(part in name.lower() for part in blocked):
-                raise AuditError("模板包含外部数据连接或活动内容。")
-            if name.endswith(".rels"):
-                relationships = fromstring(archive.read(name))
-                if any(rel.get("TargetMode", "").lower() == "external" for rel in relationships):
-                    raise AuditError("模板包含外部关系。")
-
-
 def tables(blueprint, data):
-    return ((blueprint.sheet(TB_SHEET), RAW_TB_FIELDS, data.tb),
-            (blueprint.sheet(GL_SHEET), GL_FIELDS, data.gl))
+    result = [(blueprint.sheet(TB_SHEET), RAW_TB_FIELDS, data.tb),
+              (blueprint.sheet(GL_SHEET), GL_FIELDS, data.gl)]
+    if data.prior_tb is not None or any(spec.name == PRIOR_TB_SHEET for spec in blueprint.sheets):
+        result.append((blueprint.sheet(PRIOR_TB_SHEET), RAW_PRIOR_FIELDS, data.prior_tb or ()))
+    return result
 
 
-def table_values(name, records):
+def table_values(name, records, data):
+    if name == PRIOR_TB_SHEET:
+        if records:
+            yield from prior_records(data, Ledger(data))
+        return
     for record in records:
         values = astuple(record)
         if name == TB_SHEET:
             # The hidden text key keeps codes such as 001 and 1 distinct in SUMIFS.
             values += (f"{ACCOUNT_KEY_PREFIX}{record.account_code}",)
         yield values
-
-
-def reject_merged_writes(sheet, area):
-    for merged in sheet.merged_cells.ranges:
-        if area.isdisjoint(merged):
-            continue
-        if area.min_row == area.max_row == merged.min_row and area.min_col == area.max_col == merged.min_col:
-            continue
-        raise AuditError(f"工作表 {sheet.title} 的蓝图写入区域包含合并单元格的非锚点。")
 
 
 def prepare_layout(book, blueprint, data, coverage):
@@ -189,8 +146,8 @@ def total_formulas(layout):
     return tuple(f"=ROUND(SUM({col}{layout.detail_start}:{col}{layout.detail_total - 1}),2)" for col in "CDEF")
 
 
-def openpyxl_table(sheet, spec, names, records):
-    for index, values in enumerate(table_values(spec.name, records), spec.data.min_row):
+def openpyxl_table(sheet, spec, names, records, data):
+    for index, values in enumerate(table_values(spec.name, records, data), spec.data.min_row):
         for column, (field, value) in enumerate(zip(names, values, strict=True), start=1):
             cell = sheet.cell(index, column)
             literal(cell, value)
@@ -210,7 +167,7 @@ def build(template, data, coverage, ar_account, *, blueprint=None):
     try:
         layout, frozen = prepare_layout(book, blueprint, data, coverage)
         for spec, names, records in tables(blueprint, data):
-            openpyxl_table(book[spec.name], spec, names, records)
+            openpyxl_table(book[spec.name], spec, names, records, data)
         fill_openpyxl_detail(book, blueprint, data, coverage, ar_account, layout)
         validate_written_book(book, blueprint, layout, frozen, source="template")
     except BaseException:
@@ -281,7 +238,7 @@ def native_payload(path, blueprint, data, coverage, ar_account, layout, epoch):
     with path.open("w", encoding="utf-8") as stream:
         stream.write(json.dumps(manifest, ensure_ascii=False) + "\n")
         for spec, _, records in table_specs:
-            for row in table_values(spec.name, records):
+            for row in table_values(spec.name, records, data):
                 values = tuple(excel_literal(value) for value in row)
                 stream.write(json.dumps(values, ensure_ascii=False, default=number) + "\n")
         for row in detail_values(data, coverage, layout):

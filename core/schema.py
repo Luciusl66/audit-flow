@@ -1,4 +1,4 @@
-"""The Standard_TB and Standard_GL field and amount contracts."""
+"""Field and amount contracts for Standard_TB, Standard_GL, and Standard_Prior_TB."""
 
 from dataclasses import dataclass, fields
 from datetime import date, datetime
@@ -7,10 +7,12 @@ import re
 
 TB_SHEET = "Raw_TB"
 GL_SHEET = "Standard_GL"
+PRIOR_TB_SHEET = "Raw_Prior_TB"
 ZERO = Decimal("0.00")
 CENT = Decimal("0.01")
 MAX_AMOUNT = Decimal("9999999999999.99")
 TB_AMOUNT_FIELDS = ("open_debit", "open_credit", "period_debit", "period_credit", "close_debit", "close_credit")
+PRIOR_AMOUNT_FIELDS = ("prior_audited_debit", "prior_audited_credit")
 DIRECTIONS = {"借": "借", "贷": "贷", "平": "平", "借方": "借", "贷方": "贷", "DEBIT": "借", "CREDIT": "贷", "BALANCED": "平"}
 # Keep Excel SUMIFS wildcard characters (*, ?, ~) out of normalized account codes.
 ACCOUNT_CODE = re.compile(r"[A-Z0-9][A-Z0-9._/-]{0,63}", re.ASCII)
@@ -48,14 +50,25 @@ class StandardGL:
     aux_name: str
 
 
+@dataclass(frozen=True)
+class StandardPriorTB:
+    account_code: str
+    account_name: str
+    prior_audited_debit: Decimal
+    prior_audited_credit: Decimal
+    aux_name: str | None = None
+
+
 TB_FIELDS = tuple(field.name for field in fields(StandardTB))
 GL_FIELDS = tuple(field.name for field in fields(StandardGL))
+PRIOR_TB_FIELDS = tuple(field.name for field in fields(StandardPriorTB))
 
 
 @dataclass(frozen=True)
 class StandardData:
     tb: tuple[StandardTB, ...]
     gl: tuple[StandardGL, ...]
+    prior_tb: tuple[StandardPriorTB, ...] | None = None
 
 
 def text_value(value, *, optional=False) -> str:
@@ -171,3 +184,21 @@ def validate(data: StandardData) -> None:
                     raise ValueError
         except ValueError:
             raise AuditError(f"Standard_GL 第 {line} 行不符合字段契约。") from None
+    if data.prior_tb is None:
+        return
+    if not data.prior_tb:
+        raise AuditError("Standard_Prior_TB 没有数据行。")
+    for line, row in enumerate(data.prior_tb, 2):
+        try:
+            if not isinstance(row, StandardPriorTB) or row.account_code != account_code(row.account_code):
+                raise ValueError
+            if row.account_name != text_value(row.account_name):
+                raise ValueError
+            if row.aux_name is not None and row.aux_name != text_value(row.aux_name):
+                raise ValueError
+            for field in PRIOR_AMOUNT_FIELDS:
+                value = getattr(row, field)
+                if type(value) is not Decimal or value != amount_value(value):
+                    raise ValueError
+        except ValueError:
+            raise AuditError(f"Standard_Prior_TB 第 {line} 行不符合字段契约。") from None

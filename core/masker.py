@@ -16,7 +16,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(ROOT))
 
 from adapters.base_adapter import SOURCE_TYPES, SourceCell, SourceTable, blank, source_rows
-from core.schema import DIRECTIONS, GL_FIELDS, TB_AMOUNT_FIELDS, TB_FIELDS, AuditError, date_value
+from core.schema import DIRECTIONS, GL_FIELDS, PRIOR_AMOUNT_FIELDS, PRIOR_TB_FIELDS, TB_AMOUNT_FIELDS, TB_FIELDS, AuditError, date_value
 
 SAMPLE_SIZE = 10
 HEADER_HINTS = {
@@ -24,14 +24,15 @@ HEADER_HINTS = {
     "科目级次": "level", "级次": "level", "余额方向": "direction", "借贷方向": "direction",
     "期初借方": "open_debit", "期初贷方": "open_credit", "本期借方": "period_debit", "本期贷方": "period_credit",
     "期末借方": "close_debit", "期末贷方": "close_credit",
+    "上年审定借方": "prior_audited_debit", "上年审定贷方": "prior_audited_credit",
     "借方金额": "debit", "贷方金额": "credit", "记账日期": "date", "凭证日期": "date",
     "凭证号": "voucher_no", "凭证编号": "voucher_no", "摘要": "summary", "摘要说明": "summary",
     "往来单位": "aux_name", "辅助核算": "aux_name", "客商": "aux_name", "客户名称": "aux_name",
     "往来单位名称": "aux_name", "辅助核算名称": "aux_name", "客户": "aux_name", "供应商": "aux_name",
     "金额": "amount", "余额": "amount", "本币金额": "amount",
 }
-HEADER_HINTS.update({field: field for field in (*TB_FIELDS, *GL_FIELDS)})
-AMOUNT_ROLES = {*TB_AMOUNT_FIELDS, "debit", "credit", "amount"}
+HEADER_HINTS.update({field: field for field in (*TB_FIELDS, *GL_FIELDS, *PRIOR_TB_FIELDS)})
+AMOUNT_ROLES = {*TB_AMOUNT_FIELDS, *PRIOR_AMOUNT_FIELDS, "debit", "credit", "amount"}
 NUMBER_SHAPE = re.compile(r"(?:[0-9]+|[0-9]{1,3}(?:[,，][0-9]{3})+)(?:\.([0-9]+))?")
 
 

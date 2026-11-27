@@ -2,7 +2,7 @@
 
 from adapters.base_adapter import BaseAdapter, convert_rows, mapped_rows, source_rows
 from core.schema import (
-    StandardData, StandardGL, StandardTB, TB_AMOUNT_FIELDS, account_code, account_level,
+    PRIOR_AMOUNT_FIELDS, StandardData, StandardGL, StandardPriorTB, StandardTB, TB_AMOUNT_FIELDS, account_code, account_level,
     amount_value, date_value, direction_value, optional_text, text_value,
 )
 
@@ -15,6 +15,11 @@ TB_COLUMNS = {
 GL_COLUMNS = {
     "date": "记账日期", "voucher_no": "凭证号", "summary": "摘要", "account_code": "科目编码",
     "debit": "借方金额", "credit": "贷方金额", "aux_name": "往来单位",
+}
+PRIOR_TB_COLUMNS = {
+    "account_code": "科目编码", "account_name": "科目名称",
+    "prior_audited_debit": "上年审定借方", "prior_audited_credit": "上年审定贷方",
+    "aux_name": "往来单位",
 }
 
 
@@ -32,6 +37,14 @@ class Adapter(BaseAdapter):
     # In this synthetic chart, 1231 covers trade receivables (1122) only. For a real
     # chart, use a mapping such as {"1231": ("1122",)} after the data owner confirms the scope.
     cas_allowance_pairs = {}
+
+    def convert_prior_tb(self, prior_tb_path):
+        types = {"account_code": account_code, "account_name": text_value, "aux_name": auxiliary,
+                 **dict.fromkeys(PRIOR_AMOUNT_FIELDS, amount_value)}
+        with source_rows(prior_tb_path, self.prior_tb_source) as rows:
+            selected = mapped_rows(rows, PRIOR_TB_COLUMNS, "上年审定数", self.prior_tb_source.header_row,
+                                   optional_fields=("aux_name",))
+            return tuple(StandardPriorTB(**row) for row in convert_rows(selected, types, "上年审定数"))
 
     def transform(self, tb_path, gl_path):
         tb_types = {

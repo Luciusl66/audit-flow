@@ -8,7 +8,7 @@ from pathlib import Path
 
 from openpyxl import load_workbook
 
-from core.schema import AuditError, StandardData, TB_AMOUNT_FIELDS, ZERO, amount_value
+from core.schema import AuditError, StandardData, StandardPriorTB, TB_AMOUNT_FIELDS, ZERO, amount_value
 
 SOURCE_TYPES = {".csv", ".xlsx", ".xlsm", ".xltx", ".xltm", ".xls", ".xlsb", ".ods"}
 
@@ -67,7 +67,7 @@ def blank(cell: SourceCell) -> bool:
     return cell.value is None or isinstance(cell.value, str) and not cell.value.strip()
 
 
-def mapped_rows(rows, exact_names, label, header_row=1):
+def mapped_rows(rows, exact_names, label, header_row=1, *, optional_fields=()):
     for _ in range(header_row - 1):
         next(rows, None)
     headers = next(rows, ())
@@ -77,6 +77,10 @@ def mapped_rows(rows, exact_names, label, header_row=1):
             i for i, cell in enumerate(headers)
             if cell.kind not in {"f", "e"} and cell.value == name
         ]
+        if not indexes and field in optional_fields:
+            # An omitted optional column differs from an invalid cell in a present column.
+            if not any(cell.value == name for cell in headers):
+                continue
         if len(indexes) != 1:
             raise AuditError(
                 f"{label} 字段 {field} 缺失或映射不唯一。"
@@ -133,8 +137,13 @@ class BaseAdapter(ABC):
     cas_allowance_pairs: dict[str, tuple[str, ...]] | None = None
     tb_source = SourceTable()
     gl_source = SourceTable()
+    prior_tb_source = SourceTable()
     blank_tb_amounts_are_zero = False
 
     @abstractmethod
     def transform(self, tb_path: Path, gl_path: Path) -> StandardData:
         """Normalize source records without suppressing conversion errors."""
+
+    def convert_prior_tb(self, prior_tb_path: Path) -> tuple[StandardPriorTB, ...]:
+        """Normalize an optional prior-year source. Existing adapters can omit it."""
+        raise AuditError("当前 Adapter 未配置上年审定数转换。")

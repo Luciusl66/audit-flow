@@ -1,7 +1,9 @@
-schema_version: 1
+schema_version: 2
 workpapers:
   accounts_receivable:
-    template: ar_template.xlsx
+    template_path: ar_template.xlsx
+    archetype: counterparty_tb
+    account_codes: "1122"
     sheets:
       - name: 00_自动勾稽与校验报告
         source: report
@@ -11,7 +13,8 @@ workpapers:
           A20:E20: [审定表未审数, 明细表期末合计, Raw_TB 一级期末净额, 审定表－明细表, 明细表－Raw_TB]
           A23:E23: [位置或科目, 门禁, 类别, 差异, 问题说明]
         data: A2:E1048576
-      - name: 01_准则异常与调整建议
+      - &cas_report
+        name: 01_准则异常与调整建议
         source: report
         headers:
           A5:K5: [异常类型, 位置, 科目 / 客商, 期末净额, 应收原值, 异常及复核要点, 准则依据, 建议类型, 借方, 贷方, 待确认金额]
@@ -20,9 +23,10 @@ workpapers:
         source: template
         headers:
           A5:B5: [项目, 金额]
+          D5:F5: [上年审定数, 变动额, 变动率]
         data: B3
         anchors: {AR_SUMMARY_FIRST: B6}
-        protected_formulas: [B6:B11]
+        protected_formulas: [B6:B11, D6:F6]
       - name: 应收账款明细表
         source: template
         headers:
@@ -47,3 +51,158 @@ workpapers:
         headers:
           A1:G1: [date, voucher_no, summary, account_code, debit, credit, aux_name]
         data: A2:G1048576
+      - &raw_prior
+        name: Raw_Prior_TB
+        source: template
+        headers:
+          A1:G1: [account_code, account_name, prior_audited_debit, prior_audited_credit, aux_name, account_key, balance_key]
+        data: A2:G1048576
+        anchors: {WP_PRIOR_FIRST: A2}
+
+  "1002":
+    archetype: flat_tb
+    account_codes: "1002"
+    template_path: cash_template.xlsx
+    sheets:
+      - &batch_report
+        name: 00_自动勾稽与校验报告
+        source: report
+        headers:
+          A6:E6: [门禁, 结果, 异常数, 告警数, 检查范围]
+          A12:E12: [TB 金额字段, 原始合计, 标准合计, 差额, 比较口径]
+          A20:E20: [审定表控制数, 明细表控制数, Raw_TB 控制数, 审定表－明细表, 明细表－Raw_TB]
+          A23:E23: [位置或科目, 门禁, 类别, 差异, 问题说明]
+        data: A2:E1048576
+      - *cas_report
+      - &summary
+        name: 货币资金审定表
+        source: template
+        role: summary
+        headers:
+          A5:J5: [科目编码, 科目名称, 上年审定数, 本期期初, 本期发生额, 本期未审数, 审计调整, 本期审定数, 变动额, 变动率]
+        data: A6:J1048576
+        anchors: {WP_SUMMARY_FIRST: A6, WP_SUMMARY_TOTAL: A7}
+        protected_formulas: [B3]
+        detail_formulas: C6:J7
+      - &movement
+        name: 货币资金明细表
+        source: template
+        role: detail
+        headers:
+          A5:F5: [科目编码, 明细项目, 期初余额, 本期增加, 本期减少, 期末余额]
+        data: A6:F1048576
+        anchors: {WP_DETAIL_FIRST: A6, WP_DETAIL_TOTAL: A7}
+        detail_formulas: C6:F7
+      - &aje
+        name: AJE
+        source: template
+        headers:
+          A5:C5: [科目编码, 调整净额, 说明]
+        data: A6:C205
+        anchors: {WP_AJE_FIRST: A6}
+      - &raw_tb
+        name: Raw_TB
+        source: template
+        headers:
+          A1:N1: [account_code, account_name, level, direction, open_debit, open_credit, period_debit, period_credit, close_debit, close_credit, aux_name, account_key, balance_key, detail_key]
+        data: A2:N1048576
+        anchors: {WP_TB_FIRST: A2}
+      - *raw_prior
+      - &standard_gl
+        name: Standard_GL
+        source: template
+        headers:
+          A1:I1: [date, voucher_no, summary, account_code, debit, credit, aux_name, account_key, month]
+        data: A2:I1048576
+        anchors: {WP_GL_FIRST: A2}
+
+  "1122":
+    archetype: counterparty_tb
+    account_codes: "1122"
+    template_path: counterparty_template.xlsx
+    sheets:
+      - *batch_report
+      - *cas_report
+      - <<: *summary
+        name: 应收账款审定表
+      - <<: *movement
+        name: 往来客商明细表
+        headers:
+          A5:G5: [科目编码, 客商 / 辅助核算, 期初余额, 本期增加, 本期减少, 期末余额, 前五大占比]
+        data: A6:G1048576
+        detail_formulas: C6:G7
+      - *aje
+      - *raw_tb
+      - *raw_prior
+      - *standard_gl
+
+  "6001":
+    archetype: gl_monthly_pivot
+    account_codes: "6001"
+    template_path: revenue_template.xlsx
+    normal_balance: credit
+    sheets:
+      - *batch_report
+      - *cas_report
+      - <<: *summary
+        name: 主营业务收入审定表
+      - <<: *movement
+        name: 损益月度透视表
+        headers:
+          A5:P5: [科目编码, 明细科目, 1月, 2月, 3月, 4月, 5月, 6月, 7月, 8月, 9月, 10月, 11月, 12月, 全年合计, 占比]
+        data: A6:P1048576
+        detail_formulas: C6:P7
+      - *aje
+      - *raw_tb
+      - *raw_prior
+      - *standard_gl
+
+  "1601":
+    archetype: asset_rollforward
+    account_codes: ["1601", "1602"]
+    contra_account_codes: "1602"
+    template_path: fixed_assets_template.xlsx
+    sheets:
+      - *batch_report
+      - *cas_report
+      - <<: *summary
+        name: 固定资产审定表
+      - <<: *movement
+        name: 原值变动表
+        role: gross
+        anchors: {WP_GROSS_FIRST: A6, WP_GROSS_TOTAL: A7}
+      - <<: *movement
+        name: 累计折旧变动表
+        role: contra
+        anchors: {WP_CONTRA_FIRST: A6, WP_CONTRA_TOTAL: A7}
+      - <<: *movement
+        name: 固定资产净值表
+        role: net
+        anchors: {WP_NET_FIRST: A6, WP_NET_TOTAL: A7}
+        headers:
+          A5:G5: [科目范围, 项目, 期初净值, 本期净增加, 本期净减少, 期末净值, 备抵上限校验]
+        data: A6:G1048576
+        detail_formulas: C6:G7
+      - *aje
+      - *raw_tb
+      - *raw_prior
+      - *standard_gl
+
+  "2221":
+    archetype: tax_schedule
+    account_codes: "2221"
+    template_path: tax_template.xlsx
+    normal_balance: credit
+    sheets:
+      - *batch_report
+      - *cas_report
+      - <<: *summary
+        name: 应交税费审定表
+      - <<: *movement
+        name: 应交税费分拆表
+        headers:
+          A5:F5: [科目编码, 税种 / 薪酬项目, 期初未交, 本期计提, 本期已交, 期末未交]
+      - *aje
+      - *raw_tb
+      - *raw_prior
+      - *standard_gl

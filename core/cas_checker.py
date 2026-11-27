@@ -173,13 +173,14 @@ def allowance_findings(rows, rule, pairs):
             yield from check_allowance_scope(party_group, gross_by_party.get(party, []), prefixes, rule, party)
 
 
-def scan_tb(tb, ar_account, *, account_pairs=None, rules_path=DEFAULT_RULES):
+def scan_tb(tb, ar_account, *, account_pairs=None, rules_path=DEFAULT_RULES, exclude_reclass=()):
     """Screen the full Raw_TB population. Findings need accounting review before posting."""
     rules, pairs = load_rules(rules_path, account_pairs)
     rows = tuple(enumerate(tb, 2))
     findings = []
     for key in ("AR_CREDIT", "AP_DEBIT"):
-        findings.extend(reclass_findings(rows, key, rules[key], ar_account))
+        findings.extend(finding for finding in reclass_findings(rows, key, rules[key], ar_account)
+                        if finding.position not in exclude_reclass)
     for key in ("CASH_DIRECTION", "PPE_DIRECTION"):
         findings.extend(direction_findings(rows, key, rules[key]))
     findings.extend(closing_findings(rows, rules["PL_UNCLOSED"]))
@@ -349,6 +350,49 @@ def scan_routed(data, account_codes, *, complete_vouchers=False, period_closed=F
             findings.append(Finding(rule_id, position, label, balance, detail,
                                     f"{entry['type']} 待复核", debit, credit, amount, gross))
     return RoutedScan(route, rules, tuple(findings), tuple(deferred))
+
+
+def scan_counterparties(groups, ar_account, *, quantify=True):
+    """Apply the existing receivable/payable rules to the same groups shown in the schedule."""
+    if not groups:
+        return {}, ()
+    source, _ = load_rules(DEFAULT_RULES, None)
+    rules, findings = {}, []
+    for group in groups:
+        if group.closing >= ZERO:
+            continue
+        code = group.account_code
+        if group.normal_balance == "debit" and code in (*source["AR_CREDIT"].prefixes, ar_account):
+            key = "AR_CREDIT"
+        elif group.normal_balance == "credit" and code in source["AP_DEBIT"].prefixes:
+            key = "AP_DEBIT"
+        else:
+            key = "COUNTERPARTY_DIRECTION"
+        rule = source.get(key) or Rule((), "往来余额方向待核", "",
+                                       "核对同一客商的合同、收付款和业务性质后确定重分类及对方科目。")
+        rules[key] = rule
+        balance = group.closing if group.normal_balance == "debit" else -group.closing
+        label = f"{code} / {group.party}" if group.party else code
+        detail = ("客商归集后余额与科目正常方向相反。" if group.party
+                  else "余额与科目正常方向相反。先取得客商明细。")
+        amount = abs(balance) if quantify and group.party and key in source else None
+        findings.append(Finding(key, group.source, label, balance, detail, "RJE 待确认", rule.debit, rule.credit, amount))
+    return rules, tuple(findings)
+
+
+def opening_suggestions(differences):
+    key = "OPENING_ROLLFORWARD"
+    rule = Rule((), "期初滚存差异", "本期未审期初及上年审定期末",
+                "核对上期已批准分录和本期入账记录。若确认漏记，按原分录核实对方科目后办理期初滚调。")
+    findings = []
+    for item in differences:
+        counterpart = "待核实对方科目"
+        debit, credit = (counterpart, item.label) if item.difference > ZERO else (item.label, counterpart)
+        detail = (f"期初差异 {item.difference:.2f}。核查是否属于上期审计调整未入账。"
+                  "建议分录以本期未审期初调整到上年审定期末为方向。")
+        findings.append(Finding(key, item.position, item.label, None, detail, "期初滚调待复核",
+                                debit, credit, abs(item.difference)))
+    return ({key: rule} if findings else {}), tuple(findings)
 
 
 def write_cas_sheet(book, rules, findings, *, deferred_rule_ids=()):

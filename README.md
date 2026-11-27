@@ -2,7 +2,7 @@
 
 **审计底稿明细表/审定表自动刷数工具 | The audit workpaper auto-fill terminator**
 
-把科目余额表（TB）和序时账（GL）导入底稿、填明细、接审定表公式，再逐项核对金额，是审计中反复发生的手工工作。audit-flow 把这段流程交给可复用的本地 Python 工具。明细表按数据行数自动扩展，审定表保留 Excel 公式，并附勾稽报告和准则异常建议。首个随附模板覆盖应收账款。
+audit-flow 在本地将科目余额表（TB）、序时账（GL）和可选的上年审定数转换为实质性底稿。明细随数据扩行，审定表保留 Excel 公式，批量运行生成 Master TB、勾稽报告和准则异常建议。
 
 固定核心引擎负责标准字段契约、模板、Excel 重算与审计勾稽。各客户通过 Adapter 映射不同账套的导出格式。运行无需启用 VBA 宏。
 
@@ -29,7 +29,7 @@
 1. 从合成数据开始。为真实账套建立单独的本地目录。样例、测试和公开问题单均用合成材料。
 2. 按 [SKILL.md](SKILL.md) 先跑本地脱敏探针，再用可公开画像生成 Adapter。列名从探针输出逐字复制。字段含义、期间、币种口径和层级规则由数据持有人确认。
 3. 保持勾稽门禁和金额容差 `0.00`。用 Python 或 Excel 计算财务金额。失败时核对来源与 Adapter，并保留失败证据。
-4. 由审计人员复核数据口径、未覆盖科目和准则建议。四道门禁通过仅说明本次自动勾稽通过。CAS 建议不写回未审数或 AJE，最终调整及审计结论由复核人确认。
+4. 由审计人员复核数据口径、未覆盖科目和准则建议。门禁通过表示本次自动勾稽通过。最终调整及审计结论由复核人确认。
 
 ## 快速运行
 
@@ -42,16 +42,19 @@ python -m pip install -r requirements.txt
 python core/masker.py --input data/mock/demo_tb.xlsx
 python core/masker.py --input data/mock/demo_gl.csv
 python run.py --adapter demo_kingdee --tb data/mock/demo_tb.xlsx --gl data/mock/demo_gl.csv
+python run.py --adapter demo_kingdee --subjects ALL --prior-tb data/mock/mock_prior_tb.xlsx --tb data/mock/mock_tb.xlsx --gl data/mock/mock_gl.csv
 ~~~
 
 Windows 也可用 `.\.venv\Scripts\python.exe` 代替 `python`。仓库随附模板和模拟数据，`python -m scripts.generate_demo` 可重建这些文件。真实账表按项目放在 `data/raw/`，同次运行的 TB 和 GL 应来自同一个目录、同一账套、期间和货币单位。
 
 - 探针支持 `.xlsx`、`.xlsm`、`.xltx`、`.xltm`、`.xls`、`.xlsb`、`.ods` 和 `.csv`。工作表号与表头行号从 1 开始。CSV 默认 UTF-8，其他编码或分隔符用 `--encoding`、`--delimiter`。探针只采样表头和随后最多十行。旧版或二进制格式使用文件中已保存的单元格值。
 - 探针原样公开通用表头和数据持有人批准的表头。其他表头返回 `null`。`--approved-headers` 接收 `data/raw/` 或 `data/mock/` 下经本地审核的 JSON 字符串数组，或列名到标准字段的映射。后者可为非标准摘要或客商列指定 `summary` 或 `aux_name`。摘要抹除，客商以本次画像内稳定的占位符替换，金额保持符号、括号、千分位习惯和小数位数。
-- `--ar-account` 指定应收一级科目编码，默认采用 Adapter 设置。`--recalc` 取 `auto`、`xlwings` 或 `libreoffice`。`--out` 接收 `data/output/` 下的 ASCII 文件名，省略时生成唯一名称。
+- 省略 `--subjects` 时沿用原应收入口，`--ar-account` 默认采用 Adapter 设置。显式传 `--subjects` 可用单个蓝图编码、逗号分隔列表或 `ALL`。单份底稿支持 `--out` 指定 ASCII 文件名。`--recalc` 取 `auto`、`xlwings` 或 `libreoffice`。
+- `--prior-tb` 提供同一账套的上年审定期末。省略时第 5 道门禁标记 `SKIPPED (未提供上年审定数)`，同比公式结果留空。
 - `--engine` 选择写入引擎。默认 `openpyxl`，写入阶段在本地直接处理 XLSX。`xlwings` 需要 Windows 上的本机 Excel 和 xlwings，使用后台 Excel 实例插入明细行、保留模板结构和复制报告。Excel 不可用时提示原因并退出。选用 `xlwings` 写入时，`--recalc auto` 使用 Excel 保存的重算结果。
 - 明细扩行涉及合并区域或条件格式时，使用 `--engine xlwings` 让 Excel 原生调整模板范围。原生写入遇到会被 Excel 截断的长文本时会提示改用 `--engine openpyxl`。
-- `templates/blueprint.yaml` 锁定应收模板路径、工作表清单和顺序、固定表头、数据区域及保护公式。生成前验证模板，保存前验证两张报告和整本底稿。
+- `templates/blueprint.yaml` 锁定五类原型的模板、固定表头、写入锚点及保护公式。绑定精确总账编码、带 `*` 的总账编码前缀或列表，并按需在 `rules/cas_router.yaml` 配置规则。
+- 批量 Master TB 覆盖完整账套，各总账科目只采用一个层级。建议调整用于 Master TB 期末模拟，金额留待复核后另行录入。任何门禁失败时整批输出 `*.review.xlsx`。同名批次保存在新的 `data/output/run_<id>/` 目录。
 - 退出码 0 表示 `PASS`。退出码 1 表示勾稽或重算 `FAILED`，生成 `*.review.xlsx`。退出码 2 表示参数、输入、契约或执行异常。
 - 模拟数据的终端输出可用于验收。真实数据默认只输出门禁状态，详细金额留在本地报告。数据持有人可在本地添加 `--local-amounts` 查看完整终端证据。
 
@@ -61,6 +64,7 @@ Windows 也可用 `.\.venv\Scripts\python.exe` 代替 `python`。仓库随附模
 | --- | --- |
 | Standard_TB | `account_code`、`account_name`、`level`、`direction`、`open_debit`、`open_credit`、`period_debit`、`period_credit`、`close_debit`、`close_credit`、`aux_name`（可选） |
 | Standard_GL | `date`、`voucher_no`、`summary`、`account_code`、`debit`、`credit`、`aux_name` |
+| Standard_Prior_TB | `account_code`、`account_name`、`prior_audited_debit`、`prior_audited_credit`、`aux_name`（可选） |
 
 金额采用 Decimal 两位小数。示例 Adapter 支持千分位和括号负数，GL 空白借贷侧按导出口径转为零，TB 六列须显式提供。科目、凭证号以文本录入以保留前导零。示例接受同一账套、会计期间和货币单位内带一级与明细层级的 TB。科目层级依据编码前缀识别。目标一级科目需要一条无辅助核算的余额行。明细优先采用末级科目与客商行，源表层级汇总行全部保留在 `Raw_TB`，以源文件同一粒度核对清洗守恒。
 
@@ -72,12 +76,13 @@ Windows 也可用 `.\.venv\Scripts\python.exe` 代替 `python`。仓库随附模
 | 2. 未映射兜底 | 原始范围内的有效记录全部写入底层页，未纳入应收底稿的科目逐一列出告警 |
 | 3. 跨表勾稽 | 审定表未审数、明细期末合计、Raw_TB 对应一级科目期末净额须一致 |
 | 4. 公式健康度 | 检查预期公式存在、公式缓存存在且无 Excel 错误 |
+| 5. 期初滚存勾稽 | 按科目编码和辅助核算比较本期未审期初与上年审定期末，差额必须为 0.00 |
 
 新增客户见 `SKILL.md`。运行 `python -m unittest discover -s tests` 可验证脱敏、严格差额、未映射兜底、模板公式保留和缓存检查。
 
 ## CAS 准则异常筛查
 
-四道勾稽结束后，`core/cas_checker.py` 默认使用 `rules/cas_general.yaml` 离线扫描标准 TB，在第二张工作表 `01_准则异常与调整建议` 列出异常、依据及待复核的 RJE 或 AJE。审阅重分类时核对合同和往来明细，审阅损益余额时先核对结转时点。四道门禁独立判定，分录由复核人确认后另行录入。
+`core/cas_checker.py` 默认使用 `rules/cas_general.yaml` 离线扫描标准 TB。第二张工作表 `01_准则异常与调整建议` 列出异常、依据、待复核的 RJE 或 AJE 及期初滚调建议。审阅重分类时核对合同和往来明细，审阅损益余额时先核对结转时点。门禁独立判定，分录由复核人确认后另行录入。
 
 YAML 中的编码前缀采用一般企业常见科目编码。坏账准备科目可能覆盖多类应收资产。经核对后，在客户 Adapter 中设置 `cas_allowance_pairs = {"准备科目编码": ("应收原值科目编码",)}`。缺少配对或原值时，报告会提示补充资料。对经确认的配对，程序按对应范围内应收明细的借方净额合计筛查准备上限，调整金额由复核人根据 ECL 重算确定。
 
